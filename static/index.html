@@ -49,28 +49,42 @@
           </div>
         </section>
         <section class="tab-panel" id="panel-training" role="tabpanel" aria-labelledby="tab-training">
-          <h2>Entrenamiento in vivo</h2>
-          <div class="controls"><button id="reward" type="button">US+ Recompensa (Azúcar)</button><button id="punishment" type="button">US- Castigo (Choque)</button></div>
-          <h3>Gestor de ensayos</h3>
-          <div class="controls"><button id="start-trial" type="button">Iniciar Trial 30s</button><span id="trial-message" class="subtle">Sin ensayos activos.</span></div>
-          <div class="trial-status"><div>LI actual<br><output id="learning-index">0.0%</output></div><div>Tiempo restante<br><output id="trial-time">—</output></div></div>
-          <canvas id="li-chart" class="chart" aria-label="Evolución del índice de aprendizaje por ensayo"></canvas>
-          <section class="protocol-panel" aria-labelledby="protocol-heading">
-            <h3 id="protocol-heading">Protocolo programado de entrenamiento</h3>
-            <div class="protocol-fields">
-              <label for="protocol_profile_name">Nombre del perfil resultado<input id="protocol_profile_name" type="text" maxlength="80" placeholder="Ej. Mosca_Azucar_V1"></label>
-              <label for="protocol-trials">Número de ensayos (trials)<input id="protocol-trials" type="number" min="1" max="20" step="1" value="5"></label>
-              <label for="protocol-us">Estímulo incondicionado (US)<select id="protocol-us"><option value="reward">US+ Recompensa</option><option value="punishment">US- Castigo</option><option value="none">Sin US (extinción)</option></select></label>
-              <label for="protocol-cs-duration">Duración CS+ (comida), s<input id="protocol-cs-duration" type="number" min="0.1" max="300" step="0.1" value="10"></label>
-              <label for="protocol-us-delay">Retardo US (onset), s<input id="protocol-us-delay" type="number" min="0" max="300" step="0.1" value="5"></label>
-              <label for="protocol-us-duration">Duración US, s<input id="protocol-us-duration" type="number" min="0" max="300" step="0.1" value="2"></label>
-              <label for="protocol-iti">Intervalo entre ensayos (ITI), s<input id="protocol-iti" type="number" min="0" max="600" step="0.1" value="15"></label>
+          <div class="training-visualization">
+            <h2>Entrenamiento y ensayos</h2>
+            <div class="trial-status">
+              <div>LI actual<br><output id="learning-index">0.0%</output></div>
+              <div>Tiempo restante<br><output id="trial-time">—</output></div>
+              <div>Ensayos completados<br><output id="trial-count">0</output></div>
             </div>
-            <div class="preset-controls" aria-label="Presets de protocolo"><button type="button" data-protocol-preset="classical">Condicionamiento clásico (5x)</button><button type="button" data-protocol-preset="extinction">Extinción automática (10x sin US)</button><button type="button" data-protocol-preset="aversive">Aversivo rápido (3x)</button></div>
-            <div class="controls"><button id="start-protocol" type="button">▶ Iniciar protocolo</button><button id="pause-protocol" type="button" disabled>⏸ Pausar</button><button id="stop-protocol" type="button" disabled>⏹ Detener</button></div>
-            <div class="protocol-live" aria-live="polite"><div><strong id="protocol-trial">Sin protocolo activo</strong><span id="protocol-phase">Configure y ejecute una rutina.</span></div><progress id="protocol-progress" max="100" value="0">0%</progress><output id="protocol-time">—</output></div>
-          </section>
-          <button id="save-profile" type="button">Guardar Perfil Personalizado</button>
+            <canvas id="li-chart" class="chart" aria-label="Evolución del índice de aprendizaje por ensayo"></canvas>
+          </div>
+          <div class="training-controls">
+            <nav class="training-subtabs" role="tablist" aria-label="Controles de entrenamiento">
+              <button class="training-subtab" type="button" role="tab" id="training-subtab-protocol" aria-controls="training-protocol-controls" aria-selected="true">Protocolo automático</button>
+              <button class="training-subtab" type="button" role="tab" id="training-subtab-manual" aria-controls="training-manual-controls" aria-selected="false">Entrenamiento manual</button>
+            </nav>
+            <section class="training-subpanel active protocol-panel" id="training-protocol-controls" role="tabpanel" aria-labelledby="training-subtab-protocol">
+              <h3 id="protocol-heading">Protocolo programado de entrenamiento</h3>
+              <div class="protocol-fields">
+                <label for="protocol_profile_name">Nombre del perfil resultado<input id="protocol_profile_name" type="text" maxlength="80" placeholder="Ej. Mosca_Azucar_V1"></label>
+                <label for="protocol-trials">Número de ensayos (trials)<input id="protocol-trials" type="number" min="1" max="20" step="1" value="5"></label>
+                <label for="protocol-us">Estímulo incondicionado (US)<select id="protocol-us"><option value="reward">US+ Recompensa</option><option value="punishment">US- Castigo</option><option value="none">Sin US (extinción)</option></select></label>
+                <label for="protocol-cs-duration">Duración CS+ (comida), s<input id="protocol-cs-duration" type="number" min="0.1" max="300" step="0.1" value="10"></label>
+                <label for="protocol-us-delay">Retardo US (onset), s<input id="protocol-us-delay" type="number" min="0" max="300" step="0.1" value="5"></label>
+                <label for="protocol-us-duration">Duración US, s<input id="protocol-us-duration" type="number" min="0" max="300" step="0.1" value="2"></label>
+                <label for="protocol-iti">Intervalo entre ensayos (ITI), s<input id="protocol-iti" type="number" min="0" max="600" step="0.1" value="15"></label>
+              </div>
+              <div class="preset-controls" aria-label="Presets de protocolo"><button type="button" data-protocol-preset="classical">Condicionamiento clásico (5x)</button><button type="button" data-protocol-preset="extinction">Extinción automática (10x sin US)</button><button type="button" data-protocol-preset="aversive">Aversivo rápido (3x)</button></div>
+              <div class="controls"><button id="start-protocol" type="button">▶ Iniciar protocolo</button><button id="pause-protocol" type="button" disabled>⏸ Pausar</button><button id="stop-protocol" type="button" disabled>⏹ Detener</button></div>
+              <div class="protocol-live" aria-live="polite"><div><strong id="protocol-trial">Sin protocolo activo</strong><span id="protocol-phase">Configure y ejecute una rutina.</span></div><progress id="protocol-progress" max="100" value="0">0%</progress><output id="protocol-time">—</output></div>
+            </section>
+            <section class="training-subpanel manual-training-panel" id="training-manual-controls" role="tabpanel" aria-labelledby="training-subtab-manual" hidden>
+              <h3>Entrenamiento in vivo</h3>
+              <div class="controls"><button id="reward" type="button">US+ Recompensa (Azúcar)</button><button id="punishment" type="button">US- Castigo (Choque)</button></div>
+              <div class="controls"><button id="start-trial" type="button">Iniciar Trial 30s</button><span id="trial-message" class="subtle">Sin ensayos activos.</span></div>
+              <button id="save-profile" type="button">Guardar Perfil Personalizado</button>
+            </section>
+          </div>
         </section>
         <section class="tab-panel" id="panel-scenario" role="tabpanel" aria-labelledby="tab-scenario">
           <div class="panel-header"><h2>Control 3D / Escenario</h2></div>

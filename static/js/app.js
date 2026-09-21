@@ -18,6 +18,9 @@ let latestAssociation = 0;
 function send(command) {
   if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(command));
 }
+function updateTrialCount(history = trialHistory) {
+  document.querySelector("#trial-count").textContent = String(history.length);
+}
 function values() { return coordinates.map(({ range }) => Number(range.value)); }
 function setValues(position) {
   coordinates.forEach(({ range, number }, index) => { range.value = position[index]; number.value = position[index]; });
@@ -50,6 +53,7 @@ function updateTrialClock(now = performance.now()) {
     return;
   }
   trialHistory = [...trialHistory, learningIndex];
+  updateTrialCount();
   telemetry.setTrial({ active: false, remainingMs: 0, learningIndex, history: trialHistory });
   send({ command: "complete_trial", learning_index: learningIndex });
   trial = null;
@@ -84,6 +88,14 @@ document.querySelector("#reward").addEventListener("click", () => send({ command
 document.querySelector("#punishment").addEventListener("click", () => send({ command: "trigger_us", type: "punishment" }));
 document.querySelector("#start-trial").addEventListener("click", startTrial);
 document.querySelector("#save-profile").addEventListener("click", () => send({ command: "save_custom_profile" }));
+document.querySelectorAll(".training-subtab").forEach((button) => button.addEventListener("click", () => {
+  document.querySelectorAll(".training-subtab").forEach((tab) => tab.setAttribute("aria-selected", String(tab === button)));
+  document.querySelectorAll(".training-subpanel").forEach((panel) => {
+    const active = panel.id === button.getAttribute("aria-controls");
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
+  });
+}));
 document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => {
   document.querySelectorAll(".tab-button").forEach((tab) => tab.setAttribute("aria-selected", String(tab === button)));
   document.querySelectorAll(".tab-panel").forEach((panel) => panel.classList.toggle("active", panel.id === button.getAttribute("aria-controls")));
@@ -99,11 +111,13 @@ function connect() {
     if (message.type === "error" || message.type === "notice") { status.textContent = message.message; return; }
     if (message.type === "protocol_trial_complete") {
       trialHistory = message.history;
+      updateTrialCount();
       telemetry.setTrial({ active: false, remainingMs: 0, learningIndex: message.learning_index, history: trialHistory });
       return;
     }
     if (message.type === "automatic_test_complete") {
       trialHistory = message.history;
+      updateTrialCount();
       telemetry.setTrial({ active: false, remainingMs: 0, learningIndex: message.learning_index, history: trialHistory });
       status.textContent = "Ensayo automático de prueba completado.";
       return;
@@ -113,6 +127,7 @@ function connect() {
     protocolView.update(message.protocol);
     if (!trial) {
       trialHistory = message.trial.history;
+      updateTrialCount();
       telemetry.setTrial({
         active: message.trial.active,
         remainingMs: message.trial.remaining_ms,
