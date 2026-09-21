@@ -13,6 +13,8 @@ from plotly.colors import sample_colorscale
 from plotly.subplots import make_subplots
 import streamlit as st
 
+from config.settings import CIRCUIT_DATA_PATH, LOGS_DIRECTORY, SKELETONS_DIRECTORY
+
 
 ROLE_GROUPS = {
     "ProjectionNeuron": ("PN", "#4C78A8"),
@@ -65,9 +67,9 @@ def _morphology_centroid(
 
 def _arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(add_help=False)
-    parser.add_argument("--telemetry", type=Path, default=Path("telemetry.jsonl"))
-    parser.add_argument("--circuit", type=Path, default=Path("circuit_data.json"))
-    parser.add_argument("--skeleton-dir", type=Path, default=Path("neuron_skeletons"))
+    parser.add_argument("--telemetry", type=Path, default=LOGS_DIRECTORY / "telemetry.jsonl")
+    parser.add_argument("--circuit", type=Path, default=CIRCUIT_DATA_PATH)
+    parser.add_argument("--skeleton-dir", type=Path, default=SKELETONS_DIRECTORY)
     arguments, _ = parser.parse_known_args()
     return arguments
 

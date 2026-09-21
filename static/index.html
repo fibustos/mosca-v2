@@ -5,53 +5,90 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Mosca v2 | Closed-loop 3D</title>
     <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
-    <style>
-      :root { color-scheme: dark; font-family: "IBM Plex Mono", monospace; background: #081014; color: #dce7ea; }
-      * { box-sizing: border-box; } body { margin: 0; min-height: 100vh; }
-      header { display: flex; justify-content: space-between; align-items: baseline; padding: 14px 20px; border-bottom: 1px solid #23363b; }
-      h1, h2 { font-family: "Space Grotesk", sans-serif; margin: 0; } h1 { font-size: 1.15rem; } h2 { font-size: .9rem; }
-      #status { font-size: .72rem; color: #8cabae; } #app { display: grid; grid-template-columns: minmax(420px, 2fr) minmax(300px, 1fr); gap: 12px; padding: 12px; }
-      section { min-width: 0; border: 1px solid #23363b; border-radius: 8px; background: #0c181c; overflow: hidden; }
-      #viewport { height: calc(100vh - 93px); min-height: 520px; position: relative; } #viewport > canvas { display: block; width: 100%; height: 100%; }
-      #hint { position: absolute; bottom: 12px; left: 12px; padding: 7px 9px; background: #081014cc; color: #9ccdd0; font-size: .7rem; pointer-events: none; }
-      #brain-panel { position: absolute; top: 12px; right: 12px; width: min(38%, 290px); min-width: 190px; height: 230px; border: 1px solid #35634a; border-radius: 6px; background: #07120eeb; overflow: hidden; pointer-events: none; }
-      #brain-panel h2 { position: absolute; z-index: 1; width: 100%; padding: 8px 10px; background: #07120eb8; color: #a8e8c1; font-size: .72rem; }
-      #brain-viewport { width: 100%; height: 100%; background: #020805; } #brain-viewport canvas { display: block; width: 100%; height: 100%; }
-      aside { display: grid; grid-template-rows: minmax(210px, 1fr) auto; gap: 12px; } .panel-header { padding: 12px 12px 0; }
-      #raster { width: 100%; height: 250px; display: block; } .telemetry { padding: 12px; display: grid; gap: 10px; }
-      .metrics { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; } .metric { background: #101f24; padding: 9px; border-radius: 4px; }
-      .metric label { display: block; color: #789397; font-size: .65rem; margin-bottom: 4px; } .metric output { font-size: .9rem; color: #d9f0f0; }
-      select, button { font: inherit; color: #dce7ea; background: #13262b; border: 1px solid #39555a; border-radius: 4px; padding: 7px; }
-      .controls { display: flex; gap: 8px; align-items: center; } .controls label { font-size: .72rem; color: #9ab3b6; }
-      #weights { font-size: .67rem; color: #9ab3b6; line-height: 1.5; overflow-wrap: anywhere; }
-      @media (max-width: 900px) { #app { grid-template-columns: 1fr; } #viewport { height: 60vh; min-height: 400px; } }
-    </style>
+    <link rel="stylesheet" href="css/styles.css">
   </head>
   <body>
     <header><h1>MOSCA V2 / CLOSED-LOOP 3D</h1><span id="status">conectando…</span></header>
     <main id="app">
-      <section id="viewport">
-        <div id="hint">Clic sobre el plano para crear/mover comida (CS+)</div>
-        <section id="brain-panel"><h2>Cerebro 3D (Fluorescencia GCaMP)</h2><div id="brain-viewport"></div></section>
-      </section>
-      <aside>
-        <section><div class="panel-header"><h2>Raster neuronal en tiempo real</h2></div><canvas id="raster"></canvas></section>
-        <section class="telemetry">
-          <h2>Telemetría</h2>
-          <div class="metrics">
-            <div class="metric"><label>VELOCIDAD ANGULAR</label><output id="omega">—</output></div>
-            <div class="metric"><label>DISTANCIA A COMIDA</label><output id="distance">—</output></div>
-            <div class="metric"><label>CORRIENTE PN L/R</label><output id="pn">—</output></div>
-            <div class="metric"><label>SPIKES DN L/R</label><output id="dn">—</output></div>
+      <section id="viewport"><div id="hint">Clic sobre el plano para crear/mover comida (CS+) · Arena: 20 × 20 × 8 u</div></section>
+      <aside aria-label="Panel de control">
+        <nav class="tabs" role="tablist" aria-label="Módulos de simulación">
+          <button class="tab-button" type="button" role="tab" id="tab-telemetry" aria-controls="panel-telemetry" aria-selected="true">Telemetría<br>y Perfiles</button>
+          <button class="tab-button" type="button" role="tab" id="tab-brain" aria-controls="panel-brain" aria-selected="false">Cerebro 3D<br>&amp; Optogenética</button>
+          <button class="tab-button" type="button" role="tab" id="tab-training" aria-controls="panel-training" aria-selected="false">Entrenamiento<br>&amp; Ensayos</button>
+          <button class="tab-button" type="button" role="tab" id="tab-scenario" aria-controls="panel-scenario" aria-selected="false">Control 3D<br>/ Escenario</button>
+        </nav>
+        <section class="tab-panel active" id="panel-telemetry" role="tabpanel" aria-labelledby="tab-telemetry">
+          <div class="panel-header"><h2>Raster neuronal en tiempo real</h2></div><canvas id="raster"></canvas>
+          <section class="telemetry">
+            <h2>Telemetría y perfiles</h2>
+            <div class="metrics">
+              <div class="metric"><label>VELOCIDAD ANGULAR</label><output id="omega">—</output></div>
+              <div class="metric"><label>DISTANCIA A COMIDA</label><output id="distance">—</output></div>
+              <div class="metric"><label>CORRIENTE PN L/R</label><output id="pn">—</output></div>
+              <div class="metric"><label>SPIKES DN L/R</label><output id="dn">—</output></div>
+            </div>
+            <canvas id="telemetry-chart" class="chart" aria-label="Evolución de fuerza asociativa, ángulo y velocidad"></canvas>
+            <div class="controls"><label for="profile">PERFIL</label><select id="profile"><option value="virgin">Virgen</option><option value="trained">Entrenada</option><option value="extinguished">Entrenada con Olvido/Extinción</option><option value="custom">Personalizado guardado</option></select><button id="reset" type="button">Reiniciar</button></div>
+            <div id="weights">Pesos KC→MBON: esperando telemetría.</div>
+          </section>
+        </section>
+        <section class="tab-panel" id="panel-brain" role="tabpanel" aria-labelledby="tab-brain">
+          <div class="brain-views">
+            <section id="brain-panel"><h2>Cerebro 3D (Fluorescencia GCaMP)</h2><div id="brain-viewport"></div></section>
+            <section id="connectome-panel"><h2>Grafo Conectómico del Circuito (18 Neuronas)</h2><canvas id="connectome-graph" aria-label="Grafo conectómico en tiempo real"></canvas></section>
           </div>
-          <div class="controls"><label for="profile">PERFIL</label><select id="profile"><option value="virgin">Virgen</option><option value="trained">Entrenada</option><option value="extinguished">Extinguida</option></select><button id="reset" type="button">Reiniciar</button></div>
-          <div id="weights">Pesos KC→MBON: esperando telemetría.</div>
+          <h2>Optogenética por neuropilo</h2>
+          <p class="subtle">Pulsos de un paso: ChR2 excita con azul y NpHR inhibe con amarillo.</p>
+          <div class="opto-controls">
+            <div class="opto-row"><strong>AL</strong><button class="opto-blue" data-target="AL" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="AL" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>MB</strong><button class="opto-blue" data-target="MB" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="MB" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>DAN</strong><button class="opto-blue" data-target="DAN" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="DAN" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>CX</strong><button class="opto-blue" data-target="CX" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="CX" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>DN</strong><button class="opto-blue" data-target="DN" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="DN" data-mode="NpHR" type="button">Amarillo</button></div>
+          </div>
+        </section>
+        <section class="tab-panel" id="panel-training" role="tabpanel" aria-labelledby="tab-training">
+          <h2>Entrenamiento in vivo</h2>
+          <div class="controls"><button id="reward" type="button">US+ Recompensa (Azúcar)</button><button id="punishment" type="button">US- Castigo (Choque)</button></div>
+          <h3>Gestor de ensayos</h3>
+          <div class="controls"><button id="start-trial" type="button">Iniciar Trial 30s</button><span id="trial-message" class="subtle">Sin ensayos activos.</span></div>
+          <div class="trial-status"><div>LI actual<br><output id="learning-index">0.0%</output></div><div>Tiempo restante<br><output id="trial-time">—</output></div></div>
+          <canvas id="li-chart" class="chart" aria-label="Evolución del índice de aprendizaje por ensayo"></canvas>
+          <section class="protocol-panel" aria-labelledby="protocol-heading">
+            <h3 id="protocol-heading">Protocolo programado de entrenamiento</h3>
+            <div class="protocol-fields">
+              <label for="protocol_profile_name">Nombre del perfil resultado<input id="protocol_profile_name" type="text" maxlength="80" placeholder="Ej. Mosca_Azucar_V1"></label>
+              <label for="protocol-trials">Número de ensayos (trials)<input id="protocol-trials" type="number" min="1" max="20" step="1" value="5"></label>
+              <label for="protocol-us">Estímulo incondicionado (US)<select id="protocol-us"><option value="reward">US+ Recompensa</option><option value="punishment">US- Castigo</option><option value="none">Sin US (extinción)</option></select></label>
+              <label for="protocol-cs-duration">Duración CS+ (comida), s<input id="protocol-cs-duration" type="number" min="0.1" max="300" step="0.1" value="10"></label>
+              <label for="protocol-us-delay">Retardo US (onset), s<input id="protocol-us-delay" type="number" min="0" max="300" step="0.1" value="5"></label>
+              <label for="protocol-us-duration">Duración US, s<input id="protocol-us-duration" type="number" min="0" max="300" step="0.1" value="2"></label>
+              <label for="protocol-iti">Intervalo entre ensayos (ITI), s<input id="protocol-iti" type="number" min="0" max="600" step="0.1" value="15"></label>
+            </div>
+            <div class="preset-controls" aria-label="Presets de protocolo"><button type="button" data-protocol-preset="classical">Condicionamiento clásico (5x)</button><button type="button" data-protocol-preset="extinction">Extinción automática (10x sin US)</button><button type="button" data-protocol-preset="aversive">Aversivo rápido (3x)</button></div>
+            <div class="controls"><button id="start-protocol" type="button">▶ Iniciar protocolo</button><button id="pause-protocol" type="button" disabled>⏸ Pausar</button><button id="stop-protocol" type="button" disabled>⏹ Detener</button></div>
+            <div class="protocol-live" aria-live="polite"><div><strong id="protocol-trial">Sin protocolo activo</strong><span id="protocol-phase">Configure y ejecute una rutina.</span></div><progress id="protocol-progress" max="100" value="0">0%</progress><output id="protocol-time">—</output></div>
+          </section>
+          <button id="save-profile" type="button">Guardar Perfil Personalizado</button>
+        </section>
+        <section class="tab-panel" id="panel-scenario" role="tabpanel" aria-labelledby="tab-scenario">
+          <div class="panel-header"><h2>Control 3D / Escenario</h2></div>
+          <p class="subtle">Posiciona los focos de olor con precisión dentro de la arena.</p>
+          <div class="odor-controls">
+            <div class="odor-source-selector"><span>FOCO</span><select id="odor-type"><option value="CS+">Comida (CS+)</option><option value="CS-">Estímulo B (CS-)</option></select></div>
+            <label class="coordinate-control" for="odor-x"><span>X</span><input id="odor-x" type="range" min="-9" max="9" step="0.1" value="2"><input id="odor-x-number" type="number" min="-9" max="9" step="0.1" value="2"></label>
+            <label class="coordinate-control" for="odor-y"><span>Y</span><input id="odor-y" type="range" min="-9" max="9" step="0.1" value="-2"><input id="odor-y-number" type="number" min="-9" max="9" step="0.1" value="-2"></label>
+            <label class="coordinate-control" for="odor-z"><span>Z</span><input id="odor-z" type="range" min="0.5" max="7.5" step="0.1" value="1"><input id="odor-z-number" type="number" min="0.5" max="7.5" step="0.1" value="1"></label>
+            <h3>Presets de posición rápida</h3>
+            <div class="preset-controls"><button type="button" data-odor-preset="center">Centro</button><button type="button" data-odor-preset="upper-left">Esquina Superior Izq</button><button type="button" data-odor-preset="lower-right">Esquina Inferior Der</button><button type="button" data-odor-preset="front">Frente a la Mosca</button><button type="button" data-odor-preset="random">Aleatorio</button></div>
+            <label class="toggle-control"><input id="cs-minus-enabled" type="checkbox" checked> Activar fuente secundaria CS-</label>
+            <label class="toggle-control"><input id="click-placement-mode" type="checkbox"> Modo Clic 3D en Pantalla</label>
+          </div>
         </section>
       </aside>
     </main>
-    <script type="importmap">
-      { "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }
-    </script>
-    <script type="module" src="/static/app.js"></script>
+    <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }</script>
+    <script type="module" src="js/app.js"></script>
   </body>
 </html>

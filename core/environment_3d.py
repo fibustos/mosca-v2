@@ -8,6 +8,8 @@ from typing import Mapping
 
 import numpy as np
 
+from config.settings import ARENA_X_BOUNDS, ARENA_Y_BOUNDS, ARENA_Z_BOUNDS
+
 
 @dataclass
 class OdorSource3D:
@@ -19,6 +21,7 @@ class OdorSource3D:
     z: float
     odor_strength: float = 1.0
     pn_channels: Mapping[str, float] = field(default_factory=dict)
+    enabled: bool = True
 
     @property
     def position(self) -> tuple[float, float, float]:
@@ -37,11 +40,12 @@ class OdorSource3D:
         dispersion: float,
     ) -> float | np.ndarray:
         """Return C0 / (1 + k * dist_3d^2) at one or many 3D points."""
-        distance_squared = (
+        distance = np.sqrt(
             (np.asarray(x) - self.x) ** 2
             + (np.asarray(y) - self.y) ** 2
             + (np.asarray(z) - self.z) ** 2
         )
+        distance_squared = distance**2
         concentration = self.odor_strength / (1.0 + dispersion * distance_squared)
         return float(concentration) if np.ndim(concentration) == 0 else concentration
 
@@ -52,21 +56,32 @@ class Environment3D:
 
     dispersion: float = 1.0
     odor_sources: dict[str, OdorSource3D] = field(default_factory=dict)
+    x_bounds: tuple[float, float] = ARENA_X_BOUNDS
+    y_bounds: tuple[float, float] = ARENA_Y_BOUNDS
+    z_bounds: tuple[float, float] = ARENA_Z_BOUNDS
+    boundary_margin: float = 1.25
 
     def __post_init__(self) -> None:
         if self.dispersion <= 0:
             raise ValueError("dispersion must be positive.")
+        if any(
+            lower >= upper
+            for lower, upper in (self.x_bounds, self.y_bounds, self.z_bounds)
+        ):
+            raise ValueError("Arena bounds must have a positive extent.")
+        if self.boundary_margin <= 0:
+            raise ValueError("boundary_margin must be positive.")
         if not self.odor_sources:
             self.add_source(
                 "odor_a",
                 "Odor A (CS-)",
-                (-2.0, -2.0, 0.0),
+                (-2.0, -2.0, 1.0),
                 pn_channels={"PN_L": 1.0, "PN_R": 0.15},
             )
             self.add_source(
                 "odor_b",
                 "Food (CS+)",
-                (2.0, -2.0, 0.0),
+                (2.0, -2.0, 1.0),
                 pn_channels={"PN_L": 0.15, "PN_R": 1.0},
             )
 
@@ -115,12 +130,22 @@ class Environment3D:
         except KeyError as error:
             raise KeyError(f"Unknown odor source '{source_id}'.") from error
 
+    def set_source_enabled(self, source_id: str, enabled: bool) -> None:
+        """Enable or disable a source without losing its configured position."""
+        try:
+            source = self.odor_sources[source_id]
+        except KeyError as error:
+            raise KeyError(f"Unknown odor source '{source_id}'.") from error
+        source.enabled = bool(enabled)
+
     def odor_concentrations(
         self, x: float | np.ndarray, y: float | np.ndarray, z: float | np.ndarray
     ) -> dict[str, float | np.ndarray]:
         """Return each source concentration at the supplied 3D point."""
         return {
-            source_id: source.concentration(x, y, z, self.dispersion)
+            source_id: (
+                source.concentration(x, y, z, self.dispersion) if source.enabled else 0.0
+            )
             for source_id, source in self.odor_sources.items()
         }
 
@@ -158,9 +183,51 @@ class Environment3D:
                 "pos": [source.x, source.y, source.z],
                 "odor_strength": source.odor_strength,
                 "pn_channels": dict(source.pn_channels),
+                "enabled": source.enabled,
             }
             for source_id, source in self.odor_sources.items()
         }
+
+    def reorient_fly(
+        self,
+        fly: "FlyAgent3D",
+        yaw_velocity: float,
+        pitch_velocity: float = 0.0,
+    ) -> tuple[float, float]:
+        """Smoothly steer a fly toward the arena center near a boundary."""
+        distances = (
+            fly.x - self.x_bounds[0],
+            self.x_bounds[1] - fly.x,
+            fly.y - self.y_bounds[0],
+            self.y_bounds[1] - fly.y,
+            fly.z - self.z_bounds[0],
+            self.z_bounds[1] - fly.z,
+        )
+        closest_distance = min(distances)
+        if closest_distance >= self.boundary_margin:
+            return yaw_velocity, pitch_velocity
+
+        center_x = (self.x_bounds[0] + self.x_bounds[1]) / 2
+        center_y = (self.y_bounds[0] + self.y_bounds[1]) / 2
+        center_z = (self.z_bounds[0] + self.z_bounds[1]) / 2
+        target_yaw = math.atan2(center_y - fly.y, center_x - fly.x)
+        yaw_error = (target_yaw - fly.yaw + math.pi) % math.tau - math.pi
+        horizontal_distance = math.hypot(center_x - fly.x, center_y - fly.y)
+        target_pitch = math.atan2(center_z - fly.z, horizontal_distance)
+        pitch_error = target_pitch - fly.pitch
+        proximity = 1.0 - max(0.0, closest_distance) / self.boundary_margin
+        blend = min(0.65, 0.2 + 0.45 * proximity)
+        return (
+            (1.0 - blend) * yaw_velocity + blend * max(-0.5, min(0.5, yaw_error)),
+            (1.0 - blend) * pitch_velocity
+            + blend * max(-0.25, min(0.25, pitch_error)),
+        )
+
+    def constrain_fly(self, fly: "FlyAgent3D") -> None:
+        """Keep the fly inside the physical flight-box limits."""
+        fly.x = min(self.x_bounds[1], max(self.x_bounds[0], fly.x))
+        fly.y = min(self.y_bounds[1], max(self.y_bounds[0], fly.y))
+        fly.z = min(self.z_bounds[1], max(self.z_bounds[0], fly.z))
 
 
 @dataclass

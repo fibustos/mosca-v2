@@ -15,6 +15,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from config.settings import PROJECT_ROOT, SKELETONS_DIRECTORY
 
 HEMIBRAIN_SERVER = "https://neuprint.janelia.org"
 HEMIBRAIN_DATASET = "hemibrain:v1.2.1"
@@ -306,7 +307,7 @@ def _save_skeletons(
 
 def extract_hemibrain_circuit(
     token: str,
-    skeleton_directory: Path = Path("neuron_skeletons"),
+    skeleton_directory: Path = SKELETONS_DIRECTORY,
 ) -> dict[str, Any]:
     """Fetch real Hemibrain neuron IDs and synapse counts through Navis/NeuPrint."""
     try:
@@ -451,20 +452,20 @@ def main() -> None:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("circuit_data.json"),
+        default=PROJECT_ROOT / "circuit_data.json",
         help="Destination JSON file (default: circuit_data.json).",
     )
     parser.add_argument(
         "--token-file",
         type=Path,
-        default=Path("tokens.json"),
+        default=PROJECT_ROOT / "tokens.json",
         help="Local JSON file containing neuprint_token (default: tokens.json).",
     )
     parser.add_argument(
         "--skeleton-dir",
         type=Path,
-        default=Path("neuron_skeletons"),
-        help="Directory for Navis-exported SWC skeletons (default: neuron_skeletons).",
+        default=SKELETONS_DIRECTORY,
+        help="Directory for Navis-exported SWC skeletons (default: data/neuron_skeletons).",
     )
     arguments = parser.parse_args()
 

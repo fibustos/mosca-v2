@@ -14,8 +14,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 from brian2 import ms
 
-from brain_snn import BrainSNN
-from environment import Environment2D, FlyAgent
+from config.settings import CIRCUIT_DATA_PATH, LOGS_DIRECTORY, PROFILES_DIRECTORY
+from core.brain_snn import BrainSNN
+from legacy.environment import Environment2D, FlyAgent
 
 
 class TelemetryWriter:
@@ -112,7 +113,7 @@ def _odor_to_current(
 def run_closed_loop(
     steps: int = 200,
     dt_ms: float = 5.0,
-    circuit_path: str | Path = "circuit_data.json",
+    circuit_path: str | Path = str(CIRCUIT_DATA_PATH),
     k_sensor: float = 450.0,
     k_motor: float = 0.02,
     forward_step: float = 0.02,
@@ -375,7 +376,7 @@ def run_extinction_trials(
     if extinction_trials <= 0:
         raise ValueError("extinction_trials must be positive.")
     brain = BrainSNN(
-        simulation_arguments.get("circuit_path", "circuit_data.json"),
+        simulation_arguments.get("circuit_path", str(CIRCUIT_DATA_PATH)),
         tau_decay_ms=tau_decay_ms,
     )
     brain.load_weights(weights_file)
@@ -459,7 +460,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--steps", type=int, default=200)
     parser.add_argument("--dt-ms", type=float, default=5.0)
-    parser.add_argument("--circuit", type=Path, default=Path("circuit_data.json"))
+    parser.add_argument("--circuit", type=Path, default=Path(str(CIRCUIT_DATA_PATH)))
     parser.add_argument(
         "--protocol",
         choices=("training", "testing", "extinction"),
@@ -478,7 +479,7 @@ def main() -> None:
         default=10_000.0,
         help="Constante de tiempo de olvido pasivo KC→MBON en ms.",
     )
-    parser.add_argument("--weights-file", type=Path, default=Path("trained_weights.json"))
+    parser.add_argument("--weights-file", type=Path, default=PROFILES_DIRECTORY / "trained_weights.json")
     parser.add_argument("--odor-a-pos", type=float, nargs=2, metavar=("X", "Y"), default=(-2.0, -2.0))
     parser.add_argument("--odor-b-pos", type=float, nargs=2, metavar=("X", "Y"), default=(2.0, -2.0))
     parser.add_argument("--k-sensor", type=float, default=450.0)

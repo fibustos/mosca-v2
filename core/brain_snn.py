@@ -27,6 +27,8 @@ from brian2 import (
     prefs,
 )
 
+from config.settings import CIRCUIT_DATA_PATH
+
 prefs.codegen.target = "numpy"
 
 
@@ -35,7 +37,7 @@ class BrainSNN:
 
     def __init__(
         self,
-        circuit_path: str | Path = "circuit_data.json",
+        circuit_path: str | Path = CIRCUIT_DATA_PATH,
         weight_per_synapse: Any = 100 * pA,
         integration_dt: Any = 0.1 * ms,
         tau_decay_ms: float = 10_000.0,
@@ -55,6 +57,13 @@ class BrainSNN:
         self.input_indices = self._indices_for_type("ProjectionNeuron")
         self.output_indices = self._indices_for_type("DescendingNeuron")
         self.dopaminergic_indices = self._indices_for_type("DopaminergicNeuron")
+        self._neuropil_neuron_types = {
+            "AL": {"ProjectionNeuron"},
+            "MB": {"KenyonCell", "MBON"},
+            "DAN": {"DopaminergicNeuron"},
+            "CX": {"E-PG", "P-EG"},
+            "DN": {"DescendingNeuron"},
+        }
         self._input_aliases = {
             f"PN_{neuron['side'][0].upper()}": index
             for index, neuron in enumerate(self.neuron_records)
@@ -63,11 +72,12 @@ class BrainSNN:
         self.clock = Clock(dt=integration_dt)
 
         equations = """
-        dv/dt = (v_rest - v + (i_input + i_reward + i_syn) / g_leak) / tau_m : volt (unless refractory)
+        dv/dt = (v_rest - v + (i_input + i_reward + i_opto + i_syn) / g_leak) / tau_m : volt (unless refractory)
         di_syn/dt = -i_syn / tau_syn : amp
         dcalcium/dt = -calcium / tau_ca : 1
         i_input : amp
         i_reward : amp
+        i_opto : amp
         """
         self.neurons = NeuronGroup(
             len(self.neuron_records),
@@ -95,6 +105,7 @@ class BrainSNN:
         self.neurons.i_input = 0 * pA
         self.neurons.i_syn = 0 * pA
         self.neurons.i_reward = 0 * pA
+        self.neurons.i_opto = 0 * pA
         self.neurons.calcium = 0.0
 
         regular_edges = [
@@ -253,6 +264,31 @@ class BrainSNN:
         self.neurons.i_reward[self.dopaminergic_indices] = dopamine_current_pA * pA
         self.kc_mbon_synapses.dopamine_trace = dopamine_current_pA / 500.0
 
+    def punish(self, dopamine_current_pA: float) -> None:
+        """Inject an aversive US that potentiates active KC→MBON synapses."""
+        if dopamine_current_pA <= 0:
+            raise ValueError("dopamine_current_pA must be positive.")
+        self.neurons.i_reward[self.dopaminergic_indices] = -dopamine_current_pA * pA
+        self.kc_mbon_synapses.dopamine_trace = -dopamine_current_pA / 500.0
+
+    def stimulate_neuropil(self, target: str, mode: str, current_pA: float = 500.0) -> None:
+        """Inject a one-step ChR2 or NpHR current into a displayed neuropil."""
+        if target not in self._neuropil_neuron_types:
+            raise ValueError(f"Unknown optogenetic target '{target}'.")
+        if mode not in {"ChR2", "NpHR"}:
+            raise ValueError("Optogenetic mode must be 'ChR2' or 'NpHR'.")
+        if current_pA <= 0:
+            raise ValueError("current_pA must be positive.")
+        indices = [
+            index
+            for index, neuron in enumerate(self.neuron_records)
+            if neuron["type"] in self._neuropil_neuron_types[target]
+        ]
+        if not indices:
+            raise ValueError(f"Neuropil '{target}' has no modeled neurons.")
+        polarity = 1 if mode == "ChR2" else -1
+        self.neurons.i_opto[indices] = polarity * current_pA * pA
+
     def set_extinction_active(self, active: bool) -> None:
         """Enable recovery while CS+ is present without a dopaminergic reward."""
         self.kc_mbon_synapses.extinction_active = 1 if active else 0
@@ -397,13 +433,6 @@ class BrainSNN:
     def neuropil_calcium_normalized(self) -> dict[str, float]:
         """Return mean normalized GCaMP6s activity for the displayed neuropils."""
         neuron_calcium = self.calcium_normalized()
-        neuron_types = {
-            "AL": {"ProjectionNeuron"},
-            "MB": {"KenyonCell", "MBON"},
-            "DAN": {"DopaminergicNeuron"},
-            "CX": {"E-PG", "P-EG"},
-            "DN": {"DescendingNeuron"},
-        }
         return {
             neuropil: sum(
                 neuron_calcium[neuron["id"]]
@@ -411,7 +440,7 @@ class BrainSNN:
                 if neuron["type"] in types
             )
             / sum(1 for neuron in self.neuron_records if neuron["type"] in types)
-            for neuropil, types in neuron_types.items()
+            for neuropil, types in self._neuropil_neuron_types.items()
         }
 
     def step(
@@ -442,6 +471,7 @@ class BrainSNN:
 
         self.network.run(dt_ms * ms)
         self.neurons.i_reward = 0 * pA
+        self.neurons.i_opto = 0 * pA
         current_counts = [int(count) for count in self.spike_monitor.count]
         output: dict[str, dict[str, float | int]] = {}
         for neuron_index in self.output_indices:

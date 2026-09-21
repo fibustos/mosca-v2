@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from config.settings import CIRCUIT_DATA_PATH, LOGS_DIRECTORY, SKELETONS_DIRECTORY
+
 
 ROLE_COLORS = {
     "ProjectionNeuron": "#4C78A8",
@@ -338,9 +340,9 @@ def build_dashboard(
 def main() -> None:
     """Render the dashboard once, or refresh its HTML output while telemetry grows."""
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--telemetry", type=Path, default=Path("telemetry.jsonl"))
-    parser.add_argument("--circuit", type=Path, default=Path("circuit_data.json"))
-    parser.add_argument("--skeleton-dir", type=Path, default=Path("neuron_skeletons"))
+    parser.add_argument("--telemetry", type=Path, default=LOGS_DIRECTORY / "telemetry.jsonl")
+    parser.add_argument("--circuit", type=Path, default=CIRCUIT_DATA_PATH)
+    parser.add_argument("--skeleton-dir", type=Path, default=SKELETONS_DIRECTORY)
     parser.add_argument("--output", type=Path, default=Path("dashboard_3d.html"))
     parser.add_argument("--show", action="store_true", help="Open the Plotly dashboard in a browser.")
     parser.add_argument(

@@ -64,11 +64,14 @@ anatómicos fijos.
 
 | Archivo | Responsabilidad |
 |---|---|
-| `environment.py` | Define `Environment2D`, el gradiente de olor y el agente `FlyAgent` con antenas y cinemática diferencial. |
-| `extract_circuit.py` | Consulta Hemibrain/NeuPrint mediante Navis, descubre rutas PN -> DN y PN -> KC -> MBON con proyecciones DAN, y exporta conectividad real más un esqueleto SWC por neurona. Usa una reserva sintética solo si faltan credenciales o datos. |
-| `brain_snn.py` | Implementa `BrainSNN`: neuronas LIF de Brian2, sinapsis ponderadas, monitores de voltaje/spikes y la API `step`. |
+| `core/environment_3d.py` | Define el entorno tridimensional, gradientes de olor y cinemática de vuelo. |
+| `core/extract_circuit.py` | Consulta Hemibrain/NeuPrint y exporta conectividad y esqueletos SWC. |
+| `core/brain_snn.py` | Implementa `BrainSNN` con Brian2. |
 | `main.py` | Ejecuta el lazo cerrado olor -> SNN -> DNs -> giro, y muestra trayectoria, raster y actividad motora. |
-| `dashboard_3d.py` | Renderiza el entorno 2D, las morfologías 3D reales y la telemetría de la simulación en un panel Plotly. |
+| `server/app.py` | Configura FastAPI, recursos estáticos y la ruta WebSocket. |
+| `server/websocket_manager.py` | Ejecuta sesiones de simulación aisladas a 100 Hz. |
+| `config/settings.py` | Centraliza rutas, límites de arena y constantes compartidas. |
+| `legacy/` | Conserva los visualizadores 2D/Plotly reemplazados por la aplicación web. |
 | `circuit_data.json` | Subcircuito exportado: IDs biológicos, tipos neuronales, lateralidad y pesos de sinapsis. |
 | `tokens.json` | Token local de NeuPrint; es opcional y está ignorado por Git. |
 
@@ -96,7 +99,7 @@ regenerar conectividad real de Hemibrain, cree un archivo local ignorado
 Después ejecute:
 
 ```powershell
-python extract_circuit.py --skeleton-dir neuron_skeletons
+python -m core.extract_circuit --skeleton-dir data/neuron_skeletons
 ```
 
 El exportador también acepta `NEUPRINT_AUTH_TOKEN` o `HEMIBRAIN_TOKEN` como
@@ -106,7 +109,7 @@ datos biológicos reales.
 
 Con credenciales válidas, la extracción descarga los 18 esqueletos reales con
 `navis.interfaces.neuprint.fetch_skeletons` y los guarda como SWC en
-`neuron_skeletons/`, más un `manifest.json`. Las coordenadas están en
+`data/neuron_skeletons/`, más un `manifest.json`. Las coordenadas están en
 nanómetros y el dashboard las utiliza directamente.
 
 ## Ejecución
@@ -219,7 +222,7 @@ gradiente de verde oscuro a verde neón y blanco. El entorno usa el campo 3D
 Con el entorno virtual activo, inicie el servidor:
 
 ```powershell
-python app_server.py
+python run.py
 ```
 
 Abra `http://127.0.0.1:8000/static/` en el navegador. Haga clic sobre el plano

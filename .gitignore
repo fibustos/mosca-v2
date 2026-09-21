@@ -18,6 +18,5 @@ htmlcov/
 .ruff_cache/
 
 # Locally generated dashboard artifacts and Hemibrain morphologies
-neuron_skeletons/
-telemetry.jsonl
-dashboard_3d.html
+data/neuron_skeletons/
+legacy/dashboard_3d.html
