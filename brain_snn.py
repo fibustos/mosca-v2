@@ -65,6 +65,7 @@ class BrainSNN:
         equations = """
         dv/dt = (v_rest - v + (i_input + i_reward + i_syn) / g_leak) / tau_m : volt (unless refractory)
         di_syn/dt = -i_syn / tau_syn : amp
+        dcalcium/dt = -calcium / tau_ca : 1
         i_input : amp
         i_reward : amp
         """
@@ -72,7 +73,10 @@ class BrainSNN:
             len(self.neuron_records),
             model=equations,
             threshold="v >= v_threshold",
-            reset="v = v_reset",
+            reset="""
+            v = v_reset
+            calcium += calcium_spike
+            """,
             refractory=2 * ms,
             method="euler",
             clock=self.clock,
@@ -82,6 +86,8 @@ class BrainSNN:
                 "v_threshold": -50 * mV,
                 "tau_m": 20 * ms,
                 "tau_syn": 5 * ms,
+                "tau_ca": 200 * ms,
+                "calcium_spike": 0.2,
                 "g_leak": 10 * nS,
             },
         )
@@ -89,6 +95,7 @@ class BrainSNN:
         self.neurons.i_input = 0 * pA
         self.neurons.i_syn = 0 * pA
         self.neurons.i_reward = 0 * pA
+        self.neurons.calcium = 0.0
 
         regular_edges = [
             edge
@@ -378,6 +385,33 @@ class BrainSNN:
         return {
             neuron_id: min(1.0, max(0.0, (potential_mv + 65.0) / 15.0))
             for neuron_id, potential_mv in self.membrane_potentials_mv().items()
+        }
+
+    def calcium_normalized(self) -> dict[str, float]:
+        """Return each neuron's GCaMP6s calcium signal normalized to ``[0, 1]``."""
+        return {
+            neuron["id"]: min(1.0, max(0.0, float(self.neurons.calcium[index])))
+            for index, neuron in enumerate(self.neuron_records)
+        }
+
+    def neuropil_calcium_normalized(self) -> dict[str, float]:
+        """Return mean normalized GCaMP6s activity for the displayed neuropils."""
+        neuron_calcium = self.calcium_normalized()
+        neuron_types = {
+            "AL": {"ProjectionNeuron"},
+            "MB": {"KenyonCell", "MBON"},
+            "DAN": {"DopaminergicNeuron"},
+            "CX": {"E-PG", "P-EG"},
+            "DN": {"DescendingNeuron"},
+        }
+        return {
+            neuropil: sum(
+                neuron_calcium[neuron["id"]]
+                for neuron in self.neuron_records
+                if neuron["type"] in types
+            )
+            / sum(1 for neuron in self.neuron_records if neuron["type"] in types)
+            for neuropil, types in neuron_types.items()
         }
 
     def step(

@@ -80,7 +80,7 @@ Los comandos siguientes están escritos para PowerShell en Windows:
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install "numpy<2" brian2 navis neuprint-python matplotlib pandas plotly streamlit
+python -m pip install "numpy<2" brian2 navis neuprint-python matplotlib pandas plotly streamlit fastapi uvicorn websockets
 ```
 
 `numpy<2` mantiene compatibilidad con la versión actual de Brian2. Para
@@ -203,6 +203,33 @@ durante el paso actual. La telemetría incorpora `learning` con distancia,
 refuerzo, corriente dopaminérgica, spikes DAN y peso medio KC -> MBON. El
 dashboard expresa este último como porcentaje de su valor inicial y marca cada
 evento de recompensa.
+
+## Aplicación web 3D en tiempo real
+
+La Fase 9 incorpora una interfaz WebGL 3D interactiva basada en FastAPI,
+WebSockets y Three.js. Mantiene una sesión Brian2 por cliente y emite
+telemetría a aproximadamente 100 Hz (integración SNN de 5 ms): pose
+`x/y/z/yaw/pitch`, spikes por neurona, calcio GCaMP6s normalizado por neurona
+y neuropilo, corrientes PN, pesos KC→MBON, fuentes de olor y comida. La
+dinámica GCaMP6s usa `dCa/dt = -Ca / 200 ms + S_spike`; el panel inset
+**Cerebro 3D (Fluorescencia GCaMP)** muestra AL, MB, DAN, CX y DN con el
+gradiente de verde oscuro a verde neón y blanco. El entorno usa el campo 3D
+`C = C0 / (1 + k * dist_3d²)`.
+
+Con el entorno virtual activo, inicie el servidor:
+
+```powershell
+python app_server.py
+```
+
+Abra `http://127.0.0.1:8000/static/` en el navegador. Haga clic sobre el plano
+3D para mover la comida (CS+), seleccione los perfiles Virgen, Entrenada o
+Extinguida, o reinicie la mosca. El WebSocket también acepta los comandos JSON
+`spawn_food`, `reset_fly` y `load_profile`; el servidor expone además
+`add_odor_source`, `move_odor_source` y `remove_odor_source` para gestionar
+fuentes dinámicas. La mosca Entrenada convierte la depresión KC→MBON asociada
+al CS+ en un giro inmediato hacia la comida, mientras el perfil Virgen
+conserva el giro exploratorio neutral.
 
 ## Suite de Analítica e Inspección
 
