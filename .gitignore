@@ -1,0 +1,18 @@
+# Local credentials
+tokens.json
+.env
+.env.*
+!.env.example
+
+# Python virtual environments and bytecode
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+
+# Test, coverage, and static-analysis caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/

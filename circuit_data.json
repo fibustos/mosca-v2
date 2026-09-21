@@ -1,0 +1,142 @@
+{
+  "metadata": {
+    "source": "hemibrain_neuprint_via_navis",
+    "dataset": "hemibrain:v1.2.1",
+    "navis_version": "1.12.0",
+    "weights": "real_synapse_counts",
+    "motor_paths": "real PN-to-DN paths with up to two intermediate neurons",
+    "generated_at": "2026-09-20T22:38:57.202350+00:00"
+  },
+  "neurons": [
+    {
+      "id": "542634818",
+      "body_id": 542634818,
+      "type": "ProjectionNeuron",
+      "side": "left"
+    },
+    {
+      "id": "544021095",
+      "body_id": 544021095,
+      "type": "ProjectionNeuron",
+      "side": "right"
+    },
+    {
+      "id": "387364605",
+      "body_id": 387364605,
+      "type": "E-PG",
+      "side": "left"
+    },
+    {
+      "id": "416642425",
+      "body_id": 416642425,
+      "type": "E-PG",
+      "side": "right"
+    },
+    {
+      "id": "848761388",
+      "body_id": 848761388,
+      "type": "P-EG",
+      "side": "left"
+    },
+    {
+      "id": "880875861",
+      "body_id": 880875861,
+      "type": "P-EG",
+      "side": "right"
+    },
+    {
+      "id": "861634934",
+      "body_id": 861634934,
+      "type": "KCa'b'-m",
+      "side": "left",
+      "role": "intermediate"
+    },
+    {
+      "id": "425790257",
+      "body_id": 425790257,
+      "type": "APL",
+      "side": "left",
+      "role": "intermediate"
+    },
+    {
+      "id": "264083994",
+      "body_id": 264083994,
+      "type": "DescendingNeuron",
+      "side": "left",
+      "connectome_type": "DN1a"
+    },
+    {
+      "id": "1670916819",
+      "body_id": 1670916819,
+      "type": "lLN2P_a",
+      "side": "right",
+      "role": "intermediate"
+    },
+    {
+      "id": "1702306047",
+      "body_id": 1702306047,
+      "type": "M_ilPN8t91",
+      "side": "right",
+      "role": "intermediate"
+    },
+    {
+      "id": "5813022274",
+      "body_id": 5813022274,
+      "type": "DescendingNeuron",
+      "side": "right",
+      "connectome_type": "DN1a"
+    }
+  ],
+  "connections": [
+    {
+      "source": "387364605",
+      "target": "880875861",
+      "weight": 4
+    },
+    {
+      "source": "544021095",
+      "target": "542634818",
+      "weight": 1
+    },
+    {
+      "source": "880875861",
+      "target": "387364605",
+      "weight": 3
+    },
+    {
+      "source": "880875861",
+      "target": "416642425",
+      "weight": 1
+    },
+    {
+      "source": "542634818",
+      "target": "861634934",
+      "weight": 30
+    },
+    {
+      "source": "861634934",
+      "target": "425790257",
+      "weight": 54
+    },
+    {
+      "source": "425790257",
+      "target": "264083994",
+      "weight": 1
+    },
+    {
+      "source": "544021095",
+      "target": "1670916819",
+      "weight": 6
+    },
+    {
+      "source": "1670916819",
+      "target": "1702306047",
+      "weight": 24
+    },
+    {
+      "source": "1702306047",
+      "target": "5813022274",
+      "weight": 2
+    }
+  ]
+}
