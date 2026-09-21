@@ -5,7 +5,23 @@
     "navis_version": "1.12.0",
     "weights": "real_synapse_counts",
     "motor_paths": "real PN-to-DN paths with up to two intermediate neurons",
-    "generated_at": "2026-09-20T22:38:57.202350+00:00"
+    "motor_output_normalization": {
+      "purpose": "Balance bilateral DN firing despite unequal real path gains",
+      "target": "1702306047->5813022274",
+      "simulation_gain": 2.5
+    },
+    "mushroom_body": {
+      "new_neurons": 6,
+      "new_connections": 6,
+      "pathways": "PN-to-KC-to-MBON with DAN-to-MBON projections"
+    },
+    "morphology": {
+      "format": "SWC",
+      "directory": "neuron_skeletons",
+      "manifest": "neuron_skeletons\\manifest.json",
+      "neuron_count": 18
+    },
+    "generated_at": "2026-09-21T02:28:07.980741+00:00"
   },
   "neurons": [
     {
@@ -85,6 +101,54 @@
       "type": "DescendingNeuron",
       "side": "right",
       "connectome_type": "DN1a"
+    },
+    {
+      "id": "1109223365",
+      "body_id": 1109223365,
+      "type": "KenyonCell",
+      "connectome_type": "KCab-m",
+      "side": "left",
+      "role": "mushroom_body"
+    },
+    {
+      "id": "5813020828",
+      "body_id": 5813020828,
+      "type": "MBON",
+      "connectome_type": "MBON18",
+      "side": "left",
+      "role": "mushroom_body"
+    },
+    {
+      "id": "642516892",
+      "body_id": 642516892,
+      "type": "DopaminergicNeuron",
+      "connectome_type": "PPL105",
+      "side": "left",
+      "role": "mushroom_body"
+    },
+    {
+      "id": "756196285",
+      "body_id": 756196285,
+      "type": "KenyonCell",
+      "connectome_type": "KCg-m",
+      "side": "right",
+      "role": "mushroom_body"
+    },
+    {
+      "id": "612371421",
+      "body_id": 612371421,
+      "type": "MBON",
+      "connectome_type": "MBON01",
+      "side": "right",
+      "role": "mushroom_body"
+    },
+    {
+      "id": "1233773217",
+      "body_id": 1233773217,
+      "type": "DopaminergicNeuron",
+      "connectome_type": "PAM01_a",
+      "side": "right",
+      "role": "mushroom_body"
     }
   ],
   "connections": [
@@ -136,7 +200,38 @@
     {
       "source": "1702306047",
       "target": "5813022274",
-      "weight": 2
+      "weight": 2,
+      "simulation_gain": 2.5
+    },
+    {
+      "source": "542634818",
+      "target": "1109223365",
+      "weight": 51
+    },
+    {
+      "source": "1109223365",
+      "target": "5813020828",
+      "weight": 20
+    },
+    {
+      "source": "642516892",
+      "target": "5813020828",
+      "weight": 231
+    },
+    {
+      "source": "544021095",
+      "target": "756196285",
+      "weight": 44
+    },
+    {
+      "source": "756196285",
+      "target": "612371421",
+      "weight": 34
+    },
+    {
+      "source": "1233773217",
+      "target": "612371421",
+      "weight": 61
     }
   ]
 }

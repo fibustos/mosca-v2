@@ -163,7 +163,151 @@ def _append_motor_path(
             existing_pairs.add((edge["source"], edge["target"]))
 
 
-def extract_hemibrain_circuit(token: str) -> dict[str, Any]:
+def _fetch_strongest_downstream(
+    client: Any,
+    source_body_id: int,
+    target_type_prefix: str,
+) -> tuple[dict[str, Any], int]:
+    """Fetch the strongest direct projection from one neuron to a typed target."""
+    query = f"""
+    MATCH (source:Neuron {{bodyId: {source_body_id}}})-[edge:ConnectsTo]->(target:Neuron)
+    WHERE target.type STARTS WITH '{target_type_prefix}'
+    RETURN target.bodyId AS body_id, target.type AS type, edge.weight AS weight
+    ORDER BY weight DESC
+    LIMIT 1
+    """
+    result = client.fetch_custom(query)
+    if result.empty:
+        raise RuntimeError(
+            f"No {target_type_prefix} target was found for body ID {source_body_id}."
+        )
+    row = result.iloc[0]
+    return {"bodyId": int(row["body_id"]), "type": row["type"]}, int(row["weight"])
+
+
+def _fetch_strongest_dan_input(client: Any, target_body_id: int) -> tuple[dict[str, Any], int]:
+    """Fetch the strongest PAM/PPL dopaminergic input to a mushroom-body node."""
+    query = f"""
+    MATCH (dan:Neuron)-[edge:ConnectsTo]->(target:Neuron {{bodyId: {target_body_id}}})
+    WHERE dan.type STARTS WITH 'PAM' OR dan.type STARTS WITH 'PPL'
+    RETURN dan.bodyId AS body_id, dan.type AS type, edge.weight AS weight
+    ORDER BY weight DESC
+    LIMIT 1
+    """
+    result = client.fetch_custom(query)
+    if result.empty:
+        raise RuntimeError(f"No PAM/PPL input was found for body ID {target_body_id}.")
+    row = result.iloc[0]
+    return {"bodyId": int(row["body_id"]), "type": row["type"]}, int(row["weight"])
+
+
+def _append_mushroom_body_module(
+    neuron_records: list[dict[str, Any]],
+    connections: list[dict[str, Any]],
+    pn_body_id: int,
+    kenyon_cell: dict[str, Any],
+    mbon: dict[str, Any],
+    dan: dict[str, Any],
+    pn_to_kc_weight: int,
+    kc_to_mbon_weight: int,
+    dan_to_mbon_weight: int,
+    side: str,
+) -> None:
+    """Add one real PN→KC→MBON chain with a real DAN→MBON projection."""
+    records_by_id = {record["id"]: record for record in neuron_records}
+    additions = (
+        (kenyon_cell, "KenyonCell"),
+        (mbon, "MBON"),
+        (dan, "DopaminergicNeuron"),
+    )
+    for neuron, neuron_type in additions:
+        neuron_id = str(neuron["bodyId"])
+        if neuron_id not in records_by_id:
+            record = {
+                "id": neuron_id,
+                "body_id": int(neuron["bodyId"]),
+                "type": neuron_type,
+                "connectome_type": neuron["type"],
+                "side": side,
+                "role": "mushroom_body",
+            }
+            neuron_records.append(record)
+            records_by_id[neuron_id] = record
+
+    existing_pairs = {(edge["source"], edge["target"]) for edge in connections}
+    for source, target, weight in (
+        (pn_body_id, int(kenyon_cell["bodyId"]), pn_to_kc_weight),
+        (int(kenyon_cell["bodyId"]), int(mbon["bodyId"]), kc_to_mbon_weight),
+        (int(dan["bodyId"]), int(mbon["bodyId"]), dan_to_mbon_weight),
+    ):
+        edge = {"source": str(source), "target": str(target), "weight": weight}
+        if (edge["source"], edge["target"]) not in existing_pairs:
+            connections.append(edge)
+            existing_pairs.add((edge["source"], edge["target"]))
+
+
+def _save_skeletons(
+    neuron_records: list[dict[str, Any]],
+    client: Any,
+    output_directory: Path,
+) -> dict[str, Any]:
+    """Fetch Navis skeletons and export one SWC morphology per circuit neuron."""
+    try:
+        import navis
+        from navis.interfaces.neuprint import fetch_skeletons
+    except ImportError as error:
+        raise RuntimeError(
+            "Skeleton export requires the 'navis' and 'neuprint-python' packages."
+        ) from error
+
+    output_directory.mkdir(parents=True, exist_ok=True)
+    body_ids = [int(neuron["body_id"]) for neuron in neuron_records]
+    skeletons = fetch_skeletons(body_ids, client=client)
+    expected_ids = set(body_ids)
+    exported_ids: set[int] = set()
+    files_by_id: dict[int, str] = {}
+    for skeleton in skeletons:
+        body_id = int(skeleton.id)
+        if body_id not in expected_ids:
+            continue
+        filename = f"{body_id}.swc"
+        navis.write_swc(skeleton, output_directory / filename)
+        exported_ids.add(body_id)
+        files_by_id[body_id] = filename
+
+    missing_ids = sorted(expected_ids - exported_ids)
+    if missing_ids:
+        raise RuntimeError(f"Navis did not return skeletons for body IDs: {missing_ids}.")
+
+    manifest = {
+        "format": "SWC",
+        "coordinate_units": "nanometers",
+        "neurons": [
+            {
+                "id": neuron["id"],
+                "body_id": neuron["body_id"],
+                "type": neuron["type"],
+                "file": files_by_id[int(neuron["body_id"])],
+            }
+            for neuron in neuron_records
+        ],
+    }
+    (output_directory / "manifest.json").write_text(
+        json.dumps(manifest, indent=2),
+        encoding="utf-8",
+    )
+    return {
+        "format": manifest["format"],
+        "directory": str(output_directory),
+        "manifest": str(output_directory / "manifest.json"),
+        "neuron_count": len(manifest["neurons"]),
+    }
+
+
+def extract_hemibrain_circuit(
+    token: str,
+    skeleton_directory: Path = Path("neuron_skeletons"),
+) -> dict[str, Any]:
     """Fetch real Hemibrain neuron IDs and synapse counts through Navis/NeuPrint."""
     try:
         import navis
@@ -245,6 +389,45 @@ def extract_hemibrain_circuit(token: str) -> dict[str, Any]:
         right_path_weights,
         "right",
     )
+    mushroom_body_neuron_count_before = len(neuron_records)
+    mushroom_body_connection_count_before = len(connections)
+    for pn_body_id, side in zip(
+        selected_groups["ProjectionNeuron"],
+        ("left", "right"),
+        strict=True,
+    ):
+        kenyon_cell, pn_to_kc_weight = _fetch_strongest_downstream(
+            client,
+            pn_body_id,
+            "KC",
+        )
+        mbon, kc_to_mbon_weight = _fetch_strongest_downstream(
+            client,
+            int(kenyon_cell["bodyId"]),
+            "MBON",
+        )
+        dan, dan_to_mbon_weight = _fetch_strongest_dan_input(
+            client,
+            int(mbon["bodyId"]),
+        )
+        _append_mushroom_body_module(
+            neuron_records,
+            connections,
+            pn_body_id,
+            kenyon_cell,
+            mbon,
+            dan,
+            pn_to_kc_weight,
+            kc_to_mbon_weight,
+            dan_to_mbon_weight,
+            side,
+        )
+    mushroom_body_summary = {
+        "new_neurons": len(neuron_records) - mushroom_body_neuron_count_before,
+        "new_connections": len(connections) - mushroom_body_connection_count_before,
+        "pathways": "PN-to-KC-to-MBON with DAN-to-MBON projections",
+    }
+    morphology = _save_skeletons(neuron_records, client, skeleton_directory)
 
     return {
         "metadata": {
@@ -253,6 +436,8 @@ def extract_hemibrain_circuit(token: str) -> dict[str, Any]:
             "navis_version": navis_version,
             "weights": "real_synapse_counts",
             "motor_paths": "real PN-to-DN paths with up to two intermediate neurons",
+            "mushroom_body": mushroom_body_summary,
+            "morphology": morphology,
             "generated_at": datetime.now(UTC).isoformat(),
         },
         "neurons": neuron_records,
@@ -275,6 +460,12 @@ def main() -> None:
         default=Path("tokens.json"),
         help="Local JSON file containing neuprint_token (default: tokens.json).",
     )
+    parser.add_argument(
+        "--skeleton-dir",
+        type=Path,
+        default=Path("neuron_skeletons"),
+        help="Directory for Navis-exported SWC skeletons (default: neuron_skeletons).",
+    )
     arguments = parser.parse_args()
 
     token = load_neuprint_token(arguments.token_file)
@@ -282,7 +473,7 @@ def main() -> None:
         circuit = build_fallback_circuit("No NeuPrint API token was configured.")
     else:
         try:
-            circuit = extract_hemibrain_circuit(token)
+            circuit = extract_hemibrain_circuit(token, arguments.skeleton_dir)
         except (ImportError, OSError, RuntimeError, ValueError, KeyError, AttributeError) as error:
             circuit = build_fallback_circuit(f"Hemibrain extraction failed: {error}")
 
@@ -291,6 +482,18 @@ def main() -> None:
         f"Wrote {len(circuit['neurons'])} neurons and "
         f"{len(circuit['connections'])} connections to {arguments.output} "
         f"({circuit['metadata']['source']})."
+    )
+    morphology = circuit["metadata"].get("morphology")
+    if morphology:
+        print(
+            f"Exported {morphology['neuron_count']} Navis skeletons to "
+            f"{morphology['directory']}."
+        )
+    mushroom_body = circuit["metadata"].get("mushroom_body", {})
+    print(
+        "Mushroom-body additions: "
+        f"{mushroom_body.get('new_neurons', 0)} neurons, "
+        f"{mushroom_body.get('new_connections', 0)} connections."
     )
 
 

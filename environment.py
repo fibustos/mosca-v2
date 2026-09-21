@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 import math
+from typing import Mapping
 
 import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation
@@ -15,22 +16,105 @@ import numpy as np
 
 
 @dataclass
-class Environment2D:
-    """A 2D environment with a food odor source and inverse-distance gradient."""
+class OdorSource:
+    """A chemical odor source and its projection-neuron signature."""
 
-    food_x: float = 5.0
-    food_y: float = 5.0
+    name: str
+    x: float
+    y: float
+    odor_strength: float = 1.0
+    pn_channels: Mapping[str, float] = field(default_factory=dict)
+
+    def concentration(
+        self,
+        x: float | np.ndarray,
+        y: float | np.ndarray,
+        minimum_distance: float,
+    ) -> float | np.ndarray:
+        """Return this source's inverse-distance concentration at ``(x, y)``."""
+        distance = np.hypot(np.asarray(x) - self.x, np.asarray(y) - self.y)
+        concentration = self.odor_strength / np.maximum(distance, minimum_distance)
+        return float(concentration) if np.ndim(concentration) == 0 else concentration
+
+
+@dataclass
+class Environment2D:
+    """A 2D environment with distinct odor sources and PN chemical signatures."""
+
+    odor_a_x: float = -2.0
+    odor_a_y: float = -2.0
+    odor_b_x: float = 2.0
+    odor_b_y: float = -2.0
     odor_strength: float = 1.0
     minimum_distance: float = 0.1
+    odor_a_channels: Mapping[str, float] = field(
+        default_factory=lambda: {"PN_L": 1.0, "PN_R": 0.15}
+    )
+    odor_b_channels: Mapping[str, float] = field(
+        default_factory=lambda: {"PN_L": 0.15, "PN_R": 1.0}
+    )
+
+    def __post_init__(self) -> None:
+        """Create the CS- and CS+ sources with differentiated PN profiles."""
+        self.odor_sources = {
+            "odor_a": OdorSource(
+                "Odor A (CS-)",
+                self.odor_a_x,
+                self.odor_a_y,
+                self.odor_strength,
+                self.odor_a_channels,
+            ),
+            "odor_b": OdorSource(
+                "Odor B (CS+)",
+                self.odor_b_x,
+                self.odor_b_y,
+                self.odor_strength,
+                self.odor_b_channels,
+            ),
+        }
+
+    @property
+    def food_x(self) -> float:
+        """Retain the historical food coordinate as an alias for CS+."""
+        return self.odor_b_x
+
+    @property
+    def food_y(self) -> float:
+        """Retain the historical food coordinate as an alias for CS+."""
+        return self.odor_b_y
 
     def odor_concentration(self, x: float | np.ndarray, y: float | np.ndarray) -> float | np.ndarray:
-        """Return odor concentration at ``(x, y)`` as strength / distance."""
-        distance = np.hypot(np.asarray(x) - self.food_x, np.asarray(y) - self.food_y)
-        concentration = self.odor_strength / np.maximum(distance, self.minimum_distance)
+        """Return the combined concentration of all odor sources at ``(x, y)``."""
+        concentrations = self.odor_concentrations(x, y)
+        concentration = sum(concentrations.values())
+        return float(concentration) if np.ndim(concentration) == 0 else concentration
 
-        if np.ndim(concentration) == 0:
-            return float(concentration)
-        return concentration
+    def odor_concentrations(
+        self, x: float | np.ndarray, y: float | np.ndarray
+    ) -> dict[str, float | np.ndarray]:
+        """Return separate Olor A (CS-) and Olor B (CS+) concentrations."""
+        return {
+            odor_id: source.concentration(x, y, self.minimum_distance)
+            for odor_id, source in self.odor_sources.items()
+        }
+
+    def pn_concentrations(self, x: float, y: float) -> dict[str, float]:
+        """Map chemical odor signatures to their PN channels at one sensor point."""
+        pn_concentrations: dict[str, float] = {}
+        for odor_id, concentration in self.odor_concentrations(x, y).items():
+            for channel, coefficient in self.odor_sources[odor_id].pn_channels.items():
+                pn_concentrations[channel] = pn_concentrations.get(channel, 0.0) + (
+                    float(concentration) * coefficient
+                )
+        return pn_concentrations
+
+    def distance_to(self, odor_id: str, x: float, y: float) -> float:
+        """Return Euclidean distance from ``(x, y)`` to a named odor source."""
+        try:
+            source = self.odor_sources[odor_id]
+        except KeyError as error:
+            raise KeyError(f"Unknown odor source '{odor_id}'.") from error
+        return math.hypot(x - source.x, y - source.y)
 
 
 @dataclass
@@ -40,7 +124,7 @@ class FlyAgent:
     x: float = 0.0
     y: float = 0.0
     theta: float = math.pi / 4
-    antenna_distance: float = 0.25
+    antenna_distance: float = 0.5
     antenna_angle: float = math.pi / 4
     trajectory: list[tuple[float, float]] = field(default_factory=list)
 
@@ -86,8 +170,10 @@ def visualize(environment: Environment2D, fly: FlyAgent, steps: int = 100) -> Fu
     axis.set_ylabel("y")
     axis.set_title("Fly trajectory in a food odor gradient")
 
-    x_min, x_max = -1.0, max(environment.food_x, fly.x) + 1.0
-    y_min, y_max = -1.0, max(environment.food_y, fly.y) + 1.0
+    source_x = [source.x for source in environment.odor_sources.values()]
+    source_y = [source.y for source in environment.odor_sources.values()]
+    x_min, x_max = min(-1.0, *source_x, fly.x) - 1.0, max(*source_x, fly.x) + 1.0
+    y_min, y_max = min(-1.0, *source_y, fly.y) - 1.0, max(*source_y, fly.y) + 1.0
     grid_x, grid_y = np.meshgrid(
         np.linspace(x_min, x_max, 150),
         np.linspace(y_min, y_max, 150),
@@ -101,7 +187,9 @@ def visualize(environment: Environment2D, fly: FlyAgent, steps: int = 100) -> Fu
         alpha=0.75,
     )
     figure.colorbar(field, ax=axis, label="Odor concentration")
-    axis.plot(environment.food_x, environment.food_y, "g*", markersize=14, label="Food source")
+    for odor_id, source in environment.odor_sources.items():
+        color = "#4C78A8" if odor_id == "odor_a" else "#E45756"
+        axis.plot(source.x, source.y, "*", color=color, markersize=14, label=source.name)
 
     (trajectory_line,) = axis.plot([], [], "b-", linewidth=1.5, label="Trajectory")
     (fly_marker,) = axis.plot([], [], "bo", markersize=7, label="Fly")
@@ -125,7 +213,7 @@ def visualize(environment: Environment2D, fly: FlyAgent, steps: int = 100) -> Fu
 
 
 if __name__ == "__main__":
-    environment = Environment2D(food_x=5.0, food_y=5.0)
+    environment = Environment2D(odor_b_x=5.0, odor_b_y=5.0)
     fly = FlyAgent()
     animation = visualize(environment, fly)
     plt.show()
