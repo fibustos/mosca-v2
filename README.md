@@ -162,6 +162,23 @@ La pestaña **Experimento Pavloviano** muestra el Índice de Aprendizaje
 `(tiempo cerca de Olor B - tiempo cerca de Olor A) / tiempo total`, la
 trayectoria de preferencia y la matriz KC→MBON pre/post-entrenamiento.
 
+### Dinámica de memoria: extinción y olvido pasivo
+
+El protocolo `extinction` restaura los pesos condicionados y ejecuta ensayos
+consecutivos de CS+ sin ráfaga dopaminérgica. Cada sinapsis KC→MBON vuelve
+continuamente a su peso inicial con `--tau-decay-ms` (10 000 ms por defecto);
+la exposición a CS+ sin recompensa acelera esa recuperación. El archivo de
+pesos se actualiza con el estado posterior a la extinción:
+
+```powershell
+python main.py --protocol extinction --weights-file trained_weights.json --extinction-trials 5 --tau-decay-ms 10000 --telemetry extinction.jsonl
+streamlit run analyzer_dashboard.py -- --telemetry extinction.jsonl
+```
+
+La pestaña **Dinámica de Memoria y Extinción** presenta el LI de cada ensayo y
+la recuperación del peso medio KC→MBON, separando las tasas de olvido pasivo y
+de exposición activa a CS+ sin DAN.
+
 ## Dashboard 3D
 
 `main.py` puede transmitir una muestra JSONL completa y *flush-safe* en cada

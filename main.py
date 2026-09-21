@@ -120,6 +120,10 @@ def run_closed_loop(
     odor_b_pos: tuple[float, float] = (2.0, -2.0),
     protocol: str = "training",
     weights_file: str | Path | None = None,
+    tau_decay_ms: float = 10_000.0,
+    brain: BrainSNN | None = None,
+    trial_index: int = 1,
+    time_offset_ms: float = 0.0,
     baseline_current_pa: float = 125.0,
     max_pn_current_pa: float = 350.0,
     pn_drive_scale_pa: float = 25.0,
@@ -129,8 +133,8 @@ def run_closed_loop(
     telemetry_writer: TelemetryWriter | None = None,
 ) -> ClosedLoopResult:
     """Simulate odor sensing, spiking dynamics, and DN-driven turning."""
-    if protocol not in {"training", "testing"}:
-        raise ValueError("protocol must be 'training' or 'testing'.")
+    if protocol not in {"training", "testing", "extinction"}:
+        raise ValueError("protocol must be 'training', 'testing', or 'extinction'.")
     if steps <= 0:
         raise ValueError("steps must be positive.")
     if dt_ms <= 0:
@@ -145,6 +149,10 @@ def run_closed_loop(
         raise ValueError("reward_distance must be positive.")
     if dopamine_current_pa <= 0:
         raise ValueError("dopamine_current_pa must be positive.")
+    if tau_decay_ms <= 0:
+        raise ValueError("tau_decay_ms must be positive.")
+    if trial_index <= 0:
+        raise ValueError("trial_index must be positive.")
 
     environment = Environment2D(
         odor_a_x=odor_a_pos[0],
@@ -153,11 +161,12 @@ def run_closed_loop(
         odor_b_y=odor_b_pos[1],
     )
     fly = FlyAgent(x=0.0, y=0.0, theta=0.0)
-    brain = BrainSNN(circuit_path)
-    if protocol == "testing":
-        if weights_file is None:
-            raise ValueError("testing protocol requires a KC→MBON weights file.")
-        brain.load_weights(weights_file)
+    if brain is None:
+        brain = BrainSNN(circuit_path, tau_decay_ms=tau_decay_ms)
+        if protocol in {"testing", "extinction"}:
+            if weights_file is None:
+                raise ValueError(f"{protocol} protocol requires a KC→MBON weights file.")
+            brain.load_weights(weights_file)
 
     times_ms: list[float] = []
     left_odor: list[float] = []
@@ -180,6 +189,8 @@ def run_closed_loop(
         distance_to_odor_a = environment.distance_to("odor_a", fly.x, fly.y)
         distance_to_odor_b = environment.distance_to("odor_b", fly.x, fly.y)
         received_reward = protocol == "training" and distance_to_odor_b < reward_distance
+        extinction_active = protocol == "extinction" and distance_to_odor_b < reward_distance
+        brain.set_extinction_active(extinction_active)
         if received_reward:
             brain.reward(dopamine_current_pa)
 
@@ -236,20 +247,22 @@ def run_closed_loop(
             controller_left, controller_right = float(spikes_left), float(spikes_right)
             controller_source = "DN"
         omega = k_motor * (controller_left - controller_right)
-        if protocol == "testing":
+        if protocol in {"testing", "extinction"}:
             odor_b_gradient = float(left_odors["odor_b"]) - float(right_odors["odor_b"])
             memory_strength = brain.odor_association_strength("right")
             omega += k_motor * 8.0 * memory_strength * odor_b_gradient
             controller_source += "+ memoria CS+"
         fly.step(v=forward_step, omega=omega)
 
-        simulation_time_ms = (step_index + 1) * dt_ms
+        simulation_time_ms = time_offset_ms + (step_index + 1) * dt_ms
         if telemetry_writer:
+            recovery_rates = brain.memory_recovery_rates_pa_per_ms()
             telemetry_writer.write(
                 {
                     "step": step_index + 1,
                     "time_ms": simulation_time_ms,
                     "dt_ms": dt_ms,
+                    "trial": trial_index,
                     "environment": {
                         "food_x": environment.food_x,
                         "food_y": environment.food_y,
@@ -276,6 +289,9 @@ def run_closed_loop(
                     "angular_velocity": omega,
                     "learning": {
                         "protocol": protocol,
+                        "extinction_active": extinction_active,
+                        "tau_decay_ms": tau_decay_ms,
+                        "recovery_rate_pa_per_ms": recovery_rates,
                         "reward_received": received_reward,
                         "distance_to_food": distance_to_odor_b,
                         "distance_to_odor_a": distance_to_odor_a,
@@ -298,7 +314,7 @@ def run_closed_loop(
 
         if log:
             print(
-                f"step={step_index + 1:03d} "
+                f"trial={trial_index:02d} step={step_index + 1:03d} "
                 f"odor[L={left_concentration:.4f}, R={right_concentration:.4f}, "
                 f"delta={left_concentration - right_concentration:+.4f}] "
                 f"PN[L={left_current_pa:.1f} pA, R={right_current_pa:.1f} pA] "
@@ -347,6 +363,39 @@ def run_closed_loop(
         odor_a_distances=odor_a_distances,
         odor_b_distances=odor_b_distances,
     )
+
+
+def run_extinction_trials(
+    extinction_trials: int,
+    weights_file: str | Path,
+    tau_decay_ms: float = 10_000.0,
+    **simulation_arguments: Any,
+) -> list[ClosedLoopResult]:
+    """Run consecutive unrewarded CS+ trials while preserving one brain state."""
+    if extinction_trials <= 0:
+        raise ValueError("extinction_trials must be positive.")
+    brain = BrainSNN(
+        simulation_arguments.get("circuit_path", "circuit_data.json"),
+        tau_decay_ms=tau_decay_ms,
+    )
+    brain.load_weights(weights_file)
+    results: list[ClosedLoopResult] = []
+    elapsed_ms = 0.0
+    steps = int(simulation_arguments.get("steps", 200))
+    dt_ms = float(simulation_arguments.get("dt_ms", 5.0))
+    for trial_index in range(1, extinction_trials + 1):
+        result = run_closed_loop(
+            **simulation_arguments,
+            protocol="extinction",
+            weights_file=None,
+            tau_decay_ms=tau_decay_ms,
+            brain=brain,
+            trial_index=trial_index,
+            time_offset_ms=elapsed_ms,
+        )
+        results.append(result)
+        elapsed_ms += steps * dt_ms
+    return results
 
 
 def plot_result(result: ClosedLoopResult) -> None:
@@ -413,9 +462,21 @@ def main() -> None:
     parser.add_argument("--circuit", type=Path, default=Path("circuit_data.json"))
     parser.add_argument(
         "--protocol",
-        choices=("training", "testing"),
+        choices=("training", "testing", "extinction"),
         default="training",
-        help="training empareja CS+ con dopamina; testing recupera memoria sin dopamina.",
+        help="training refuerza CS+; testing y extinction no activan dopamina.",
+    )
+    parser.add_argument(
+        "--extinction-trials",
+        type=int,
+        default=5,
+        help="Número de ensayos CS+ consecutivos sin recompensa para extinction.",
+    )
+    parser.add_argument(
+        "--tau-decay-ms",
+        type=float,
+        default=10_000.0,
+        help="Constante de tiempo de olvido pasivo KC→MBON en ms.",
     )
     parser.add_argument("--weights-file", type=Path, default=Path("trained_weights.json"))
     parser.add_argument("--odor-a-pos", type=float, nargs=2, metavar=("X", "Y"), default=(-2.0, -2.0))
@@ -437,22 +498,35 @@ def main() -> None:
         if arguments.telemetry
         else nullcontext(None)
     ) as telemetry_writer:
-        result = run_closed_loop(
-            steps=arguments.steps,
-            dt_ms=arguments.dt_ms,
-            circuit_path=arguments.circuit,
-            odor_a_pos=tuple(arguments.odor_a_pos),
-            odor_b_pos=tuple(arguments.odor_b_pos),
-            protocol=arguments.protocol,
-            weights_file=arguments.weights_file,
-            k_sensor=arguments.k_sensor,
-            k_motor=arguments.k_motor,
-            reward_distance=arguments.reward_distance,
-            dopamine_current_pa=arguments.dopamine_current_pa,
-            log=not arguments.quiet,
-            telemetry_writer=telemetry_writer,
-        )
-    if arguments.protocol == "training":
+        simulation_arguments = {
+            "steps": arguments.steps,
+            "dt_ms": arguments.dt_ms,
+            "circuit_path": arguments.circuit,
+            "odor_a_pos": tuple(arguments.odor_a_pos),
+            "odor_b_pos": tuple(arguments.odor_b_pos),
+            "k_sensor": arguments.k_sensor,
+            "k_motor": arguments.k_motor,
+            "reward_distance": arguments.reward_distance,
+            "dopamine_current_pa": arguments.dopamine_current_pa,
+            "log": not arguments.quiet,
+            "telemetry_writer": telemetry_writer,
+        }
+        if arguments.protocol == "extinction":
+            results = run_extinction_trials(
+                arguments.extinction_trials,
+                arguments.weights_file,
+                arguments.tau_decay_ms,
+                **simulation_arguments,
+            )
+            result = results[-1]
+        else:
+            result = run_closed_loop(
+                **simulation_arguments,
+                protocol=arguments.protocol,
+                weights_file=arguments.weights_file,
+                tau_decay_ms=arguments.tau_decay_ms,
+            )
+    if arguments.protocol in {"training", "extinction"}:
         result.brain.save_weights(arguments.weights_file)
     plot_result(result)
 

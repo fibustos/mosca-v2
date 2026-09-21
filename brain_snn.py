@@ -38,7 +38,15 @@ class BrainSNN:
         circuit_path: str | Path = "circuit_data.json",
         weight_per_synapse: Any = 100 * pA,
         integration_dt: Any = 0.1 * ms,
+        tau_decay_ms: float = 10_000.0,
+        extinction_tau_ms: float | None = None,
     ) -> None:
+        if tau_decay_ms <= 0:
+            raise ValueError("tau_decay_ms must be positive.")
+        if extinction_tau_ms is None:
+            extinction_tau_ms = tau_decay_ms / 5
+        if extinction_tau_ms <= 0:
+            raise ValueError("extinction_tau_ms must be positive.")
         circuit = self._load_circuit(Path(circuit_path))
         self.neuron_records = circuit["neurons"]
         self.id_to_index = {
@@ -113,12 +121,17 @@ class BrainSNN:
         ]
 
         max_plastic_weight = max(edge["weight"] for edge in plastic_edges) * weight_per_synapse * 2
+        self.tau_decay_ms = tau_decay_ms
+        self.extinction_tau_ms = extinction_tau_ms
         self.kc_mbon_synapses = Synapses(
             self.neurons,
             self.neurons,
             model="""
-            w : amp
+            w_initial : amp (constant)
             ddopamine_trace/dt = -dopamine_trace / tau_dopamine : 1 (clock-driven)
+            dw/dt = (w_initial - w) / tau_decay
+                + extinction_active * (w_initial - w) / tau_extinction : amp (clock-driven)
+            extinction_active : 1
             """,
             on_pre="""
             i_syn_post += w
@@ -130,6 +143,8 @@ class BrainSNN:
                 "learning_rate": 0.02,
                 "w_min": 0 * pA,
                 "w_max": max_plastic_weight,
+                "tau_decay": tau_decay_ms * ms,
+                "tau_extinction": extinction_tau_ms * ms,
             },
         )
         kc_indices = [self.id_to_index[edge["source"]] for edge in plastic_edges]
@@ -138,7 +153,9 @@ class BrainSNN:
         self.kc_mbon_synapses.w = [
             edge["weight"] * weight_per_synapse for edge in plastic_edges
         ]
+        self.kc_mbon_synapses.w_initial = self.kc_mbon_synapses.w
         self.kc_mbon_synapses.dopamine_trace = 0
+        self.kc_mbon_synapses.extinction_active = 0
         self._initial_kc_mbon_weights_pa = self.kc_mbon_weights_pa()
 
         self.spike_monitor = SpikeMonitor(self.neurons)
@@ -229,6 +246,26 @@ class BrainSNN:
         self.neurons.i_reward[self.dopaminergic_indices] = dopamine_current_pA * pA
         self.kc_mbon_synapses.dopamine_trace = dopamine_current_pA / 500.0
 
+    def set_extinction_active(self, active: bool) -> None:
+        """Enable recovery while CS+ is present without a dopaminergic reward."""
+        self.kc_mbon_synapses.extinction_active = 1 if active else 0
+
+    def memory_recovery_rates_pa_per_ms(self) -> dict[str, float]:
+        """Return mean passive and CS+-exposure recovery rates in pA/ms."""
+        current_weights = self.kc_mbon_weights_pa()
+        deficits = [
+            initial_weight - current_weights[connection]
+            for connection, initial_weight in self._initial_kc_mbon_weights_pa.items()
+        ]
+        mean_deficit = sum(deficits) / len(deficits)
+        passive = mean_deficit / self.tau_decay_ms
+        active = (
+            mean_deficit / self.extinction_tau_ms
+            if bool(self.kc_mbon_synapses.extinction_active[0])
+            else 0.0
+        )
+        return {"passive": passive, "active_extinction": active}
+
     def mean_kc_mbon_weight_pa(self) -> float:
         """Return the mean current weight of the plastic KC→MBON synapses in pA."""
         weights = [float(weight / pA) for weight in self.kc_mbon_synapses.w]
@@ -307,6 +344,10 @@ class BrainSNN:
         if any(weight < 0 for weight in self._initial_kc_mbon_weights_pa.values()):
             raise ValueError("Initial KC→MBON weights must be non-negative.")
         self.kc_mbon_synapses.w = [weight * pA for weight in ordered_weights]
+        self.kc_mbon_synapses.w_initial = [
+            self._initial_kc_mbon_weights_pa[f"{edge['source']}->{edge['target']}"] * pA
+            for edge in self._plastic_edges
+        ]
 
     def odor_association_strength(self, side: str) -> float:
         """Return KC→MBON depression for an odor mapped to the given PN side."""

@@ -317,6 +317,96 @@ def pavlovian_weights_figure(rows: list[dict[str, Any]]) -> go.Figure:
     return figure
 
 
+def extinction_figures(rows: list[dict[str, Any]]) -> tuple[go.Figure, go.Figure]:
+    """Build LI-by-trial and synaptic-recovery figures for extinction telemetry."""
+    trials: dict[int, list[dict[str, Any]]] = {}
+    for row in rows:
+        trial = row.get("trial")
+        if not isinstance(trial, int):
+            continue
+        if _learning_value(row, "protocol", "") != "extinction":
+            continue
+        trials.setdefault(trial, []).append(row)
+    if not trials:
+        raise ValueError("La telemetría no incluye ensayos de extinción.")
+
+    trial_numbers = sorted(trials)
+    learning_indices = [_pavlovian_data(trials[trial])[0] for trial in trial_numbers]
+    li_figure = go.Figure(
+        go.Scatter(
+            x=trial_numbers,
+            y=learning_indices,
+            mode="lines+markers",
+            name="Índice de Aprendizaje",
+            line={"color": "#E45756", "width": 3},
+        )
+    )
+    li_figure.add_hline(y=0, line_dash="dash", line_color="#777777")
+    li_figure.update_layout(
+        title="Curva de extinción: Índice de Aprendizaje por ensayo",
+        xaxis_title="Ensayo sin recompensa",
+        yaxis_title="LI",
+        template="plotly_white",
+        height=420,
+    )
+
+    times = [float(row["time_ms"]) for row in rows]
+    weights = [float(_learning_value(row, "kc_mbon_mean_weight_pa")) for row in rows]
+    passive_rates = [
+        float(_learning_value(row, "recovery_rate_pa_per_ms", {}).get("passive", 0.0))
+        if isinstance(_learning_value(row, "recovery_rate_pa_per_ms", {}), dict)
+        else 0.0
+        for row in rows
+    ]
+    active_rates = [
+        float(_learning_value(row, "recovery_rate_pa_per_ms", {}).get("active_extinction", 0.0))
+        if isinstance(_learning_value(row, "recovery_rate_pa_per_ms", {}), dict)
+        else 0.0
+        for row in rows
+    ]
+    recovery_figure = make_subplots(specs=[[{"secondary_y": True}]])
+    recovery_figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=weights,
+            mode="lines",
+            name="Peso medio KC→MBON",
+            line={"color": "#54A24B", "width": 3},
+        ),
+        secondary_y=False,
+    )
+    recovery_figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=passive_rates,
+            mode="lines",
+            name="Recuperación pasiva",
+            line={"color": "#4C78A8", "dash": "dot"},
+        ),
+        secondary_y=True,
+    )
+    recovery_figure.add_trace(
+        go.Scatter(
+            x=times,
+            y=active_rates,
+            mode="lines",
+            name="Extinción activa (CS+ sin DAN)",
+            line={"color": "#F58518"},
+        ),
+        secondary_y=True,
+    )
+    recovery_figure.update_layout(
+        title="Recuperación sináptica: olvido pasivo y extinción activa",
+        template="plotly_white",
+        height=460,
+        legend={"orientation": "h"},
+    )
+    recovery_figure.update_xaxes(title_text="Tiempo de simulación (ms)")
+    recovery_figure.update_yaxes(title_text="Peso medio KC→MBON (pA)", secondary_y=False)
+    recovery_figure.update_yaxes(title_text="Tasa de recuperación (pA/ms)", secondary_y=True)
+    return li_figure, recovery_figure
+
+
 def network_figure(rows: list[dict[str, Any]], neurons: list[dict[str, Any]]) -> go.Figure:
     ordered_neurons = sorted(
         neurons,
@@ -640,10 +730,11 @@ def main() -> None:
     metric_columns[2].metric("Distancia mínima a comida", f"{minimum_distance:.3f}")
     metric_columns[3].metric("Eficiencia de trayectoria", f"{efficiency:.3f}")
 
-    plasticity_tab, pavlovian_tab, network_tab, playback_tab = st.tabs(
+    plasticity_tab, pavlovian_tab, extinction_tab, network_tab, playback_tab = st.tabs(
         (
             "Plasticidad y Aprendizaje",
             "Experimento Pavloviano",
+            "Dinámica de Memoria y Extinción",
             "Dinámica de Red",
             "Playback Espacial y Red 3D",
         )
@@ -662,6 +753,14 @@ def main() -> None:
             st.plotly_chart(pavlovian_weights_figure(rows), use_container_width=True)
         except ValueError as error:
             st.info(f"Esta telemetría no corresponde a un experimento Pavloviano: {error}")
+
+    with extinction_tab:
+        try:
+            li_figure, recovery_figure = extinction_figures(rows)
+            st.plotly_chart(li_figure, use_container_width=True)
+            st.plotly_chart(recovery_figure, use_container_width=True)
+        except ValueError as error:
+            st.info(f"Esta telemetría no corresponde a un experimento de extinción: {error}")
 
     with network_tab:
         st.plotly_chart(network_figure(rows, neurons), use_container_width=True)
