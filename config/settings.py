@@ -1,0 +1,30 @@
+"""Central paths and runtime constants for the Mosca simulation."""
+
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parents[1]
+HOST = "0.0.0.0"
+PORT = 8000
+STATIC_DIRECTORY = PROJECT_ROOT / "static"
+DATA_DIRECTORY = PROJECT_ROOT / "data"
+PROFILES_DIRECTORY = DATA_DIRECTORY / "profiles"
+LOGS_DIRECTORY = DATA_DIRECTORY / "logs"
+SKELETONS_DIRECTORY = DATA_DIRECTORY / "neuron_skeletons"
+CIRCUIT_DATA_PATH = PROJECT_ROOT / "circuit_data.json"
+CUSTOM_PROFILE_WEIGHTS = PROFILES_DIRECTORY / "custom_profile_weights.json"
+
+ARENA_X_BOUNDS = (-10.0, 10.0)
+ARENA_Y_BOUNDS = (-10.0, 10.0)
+ARENA_Z_BOUNDS = (0.0, 8.0)
+ODOR_POSITION_BOUNDS = ((-9.0, 9.0), (-9.0, 9.0), (0.5, 7.5))
+
+STEP_SECONDS = 0.01
+DT_MS = 5.0
+BASELINE_CURRENT_PA = 125.0
+MAX_CURRENT_PA = 350.0
+SENSOR_GAIN = 450.0
+MOTOR_GAIN = 0.02
+FORWARD_STEP = 0.02
+REWARD_DISTANCE = 0.6
+US_CURRENT_PA = 700.0
+TRIAL_DURATION_MS = 30_000.0

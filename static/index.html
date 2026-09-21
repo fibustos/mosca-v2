@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Mosca v2 | Closed-loop 3D</title>
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@500;600&display=swap">
+    <link rel="stylesheet" href="css/styles.css">
+  </head>
+  <body>
+    <header><h1>MOSCA V2 / CLOSED-LOOP 3D</h1><span id="status">conectando…</span></header>
+    <main id="app">
+      <section id="viewport"><div id="hint">Clic sobre el plano para crear/mover comida (CS+) · Arena: 20 × 20 × 8 u</div></section>
+      <aside aria-label="Panel de control">
+        <nav class="tabs" role="tablist" aria-label="Módulos de simulación">
+          <button class="tab-button" type="button" role="tab" id="tab-telemetry" aria-controls="panel-telemetry" aria-selected="true">Telemetría<br>y Perfiles</button>
+          <button class="tab-button" type="button" role="tab" id="tab-brain" aria-controls="panel-brain" aria-selected="false">Cerebro 3D<br>&amp; Optogenética</button>
+          <button class="tab-button" type="button" role="tab" id="tab-training" aria-controls="panel-training" aria-selected="false">Entrenamiento<br>&amp; Ensayos</button>
+          <button class="tab-button" type="button" role="tab" id="tab-scenario" aria-controls="panel-scenario" aria-selected="false">Control 3D<br>/ Escenario</button>
+        </nav>
+        <section class="tab-panel active" id="panel-telemetry" role="tabpanel" aria-labelledby="tab-telemetry">
+          <div class="panel-header"><h2>Raster neuronal en tiempo real</h2></div><canvas id="raster"></canvas>
+          <section class="telemetry">
+            <h2>Telemetría y perfiles</h2>
+            <div class="metrics">
+              <div class="metric"><label>VELOCIDAD ANGULAR</label><output id="omega">—</output></div>
+              <div class="metric"><label>DISTANCIA A COMIDA</label><output id="distance">—</output></div>
+              <div class="metric"><label>CORRIENTE PN L/R</label><output id="pn">—</output></div>
+              <div class="metric"><label>SPIKES DN L/R</label><output id="dn">—</output></div>
+            </div>
+            <canvas id="telemetry-chart" class="chart" aria-label="Evolución de fuerza asociativa, ángulo y velocidad"></canvas>
+            <div class="controls"><label for="profile">PERFIL</label><select id="profile"><option value="virgin">Virgen</option><option value="trained">Entrenada</option><option value="extinguished">Entrenada con Olvido/Extinción</option><option value="custom">Personalizado guardado</option></select><button id="reset" type="button">Reiniciar</button></div>
+            <div id="weights">Pesos KC→MBON: esperando telemetría.</div>
+          </section>
+        </section>
+        <section class="tab-panel" id="panel-brain" role="tabpanel" aria-labelledby="tab-brain">
+          <div class="brain-views">
+            <section id="brain-panel"><h2>Cerebro 3D (Fluorescencia GCaMP)</h2><div id="brain-viewport"></div></section>
+            <section id="connectome-panel"><h2>Grafo Conectómico del Circuito (18 Neuronas)</h2><canvas id="connectome-graph" aria-label="Grafo conectómico en tiempo real"></canvas></section>
+          </div>
+          <h2>Optogenética por neuropilo</h2>
+          <p class="subtle">Pulsos de un paso: ChR2 excita con azul y NpHR inhibe con amarillo.</p>
+          <div class="opto-controls">
+            <div class="opto-row"><strong>AL</strong><button class="opto-blue" data-target="AL" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="AL" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>MB</strong><button class="opto-blue" data-target="MB" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="MB" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>DAN</strong><button class="opto-blue" data-target="DAN" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="DAN" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>CX</strong><button class="opto-blue" data-target="CX" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="CX" data-mode="NpHR" type="button">Amarillo</button></div>
+            <div class="opto-row"><strong>DN</strong><button class="opto-blue" data-target="DN" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="DN" data-mode="NpHR" type="button">Amarillo</button></div>
+          </div>
+        </section>
+        <section class="tab-panel" id="panel-training" role="tabpanel" aria-labelledby="tab-training">
+          <div class="training-visualization">
+            <h2>Entrenamiento y ensayos</h2>
+            <div class="trial-status">
+              <div>LI actual<br><output id="learning-index">0.0%</output></div>
+              <div>Tiempo restante<br><output id="trial-time">—</output></div>
+              <div>Ensayos completados<br><output id="trial-count">0</output></div>
+            </div>
+            <canvas id="li-chart" class="chart" aria-label="Evolución del índice de aprendizaje por ensayo"></canvas>
+          </div>
+          <div class="training-controls">
+            <nav class="training-subtabs" role="tablist" aria-label="Controles de entrenamiento">
+              <button class="training-subtab" type="button" role="tab" id="training-subtab-protocol" aria-controls="training-protocol-controls" aria-selected="true">Protocolo automático</button>
+              <button class="training-subtab" type="button" role="tab" id="training-subtab-manual" aria-controls="training-manual-controls" aria-selected="false">Entrenamiento manual</button>
+            </nav>
+            <section class="training-subpanel active protocol-panel" id="training-protocol-controls" role="tabpanel" aria-labelledby="training-subtab-protocol">
+              <h3 id="protocol-heading">Protocolo programado de entrenamiento</h3>
+              <div class="protocol-fields">
+                <label for="protocol_profile_name">Nombre del perfil resultado<input id="protocol_profile_name" type="text" maxlength="80" placeholder="Ej. Mosca_Azucar_V1"></label>
+                <label for="protocol-trials">Número de ensayos (trials)<input id="protocol-trials" type="number" min="1" max="20" step="1" value="5"></label>
+                <label for="protocol-us">Estímulo incondicionado (US)<select id="protocol-us"><option value="reward">US+ Recompensa</option><option value="punishment">US- Castigo</option><option value="none">Sin US (extinción)</option></select></label>
+                <label for="protocol-cs-duration">Duración CS+ (comida), s<input id="protocol-cs-duration" type="number" min="0.1" max="300" step="0.1" value="10"></label>
+                <label for="protocol-us-delay">Retardo US (onset), s<input id="protocol-us-delay" type="number" min="0" max="300" step="0.1" value="5"></label>
+                <label for="protocol-us-duration">Duración US, s<input id="protocol-us-duration" type="number" min="0" max="300" step="0.1" value="2"></label>
+                <label for="protocol-iti">Intervalo entre ensayos (ITI), s<input id="protocol-iti" type="number" min="0" max="600" step="0.1" value="15"></label>
+              </div>
+              <div class="preset-controls" aria-label="Presets de protocolo"><button type="button" data-protocol-preset="classical">Condicionamiento clásico (5x)</button><button type="button" data-protocol-preset="extinction">Extinción automática (10x sin US)</button><button type="button" data-protocol-preset="aversive">Aversivo rápido (3x)</button></div>
+              <div class="controls"><button id="start-protocol" type="button">▶ Iniciar protocolo</button><button id="pause-protocol" type="button" disabled>⏸ Pausar</button><button id="stop-protocol" type="button" disabled>⏹ Detener</button></div>
+              <div class="protocol-live" aria-live="polite"><div><strong id="protocol-trial">Sin protocolo activo</strong><span id="protocol-phase">Configure y ejecute una rutina.</span></div><progress id="protocol-progress" max="100" value="0">0%</progress><output id="protocol-time">—</output></div>
+            </section>
+            <section class="training-subpanel manual-training-panel" id="training-manual-controls" role="tabpanel" aria-labelledby="training-subtab-manual" hidden>
+              <h3>Entrenamiento in vivo</h3>
+              <div class="controls"><button id="reward" type="button">US+ Recompensa (Azúcar)</button><button id="punishment" type="button">US- Castigo (Choque)</button></div>
+              <div class="controls"><button id="start-trial" type="button">Iniciar Trial 30s</button><span id="trial-message" class="subtle">Sin ensayos activos.</span></div>
+              <button id="save-profile" type="button">Guardar Perfil Personalizado</button>
+            </section>
+          </div>
+        </section>
+        <section class="tab-panel" id="panel-scenario" role="tabpanel" aria-labelledby="tab-scenario">
+          <div class="panel-header"><h2>Control 3D / Escenario</h2></div>
+          <p class="subtle">Posiciona los focos de olor con precisión dentro de la arena.</p>
+          <div class="odor-controls">
+            <div class="odor-source-selector"><span>FOCO</span><select id="odor-type"><option value="CS+">Comida (CS+)</option><option value="CS-">Estímulo B (CS-)</option></select></div>
+            <label class="coordinate-control" for="odor-x"><span>X</span><input id="odor-x" type="range" min="-9" max="9" step="0.1" value="2"><input id="odor-x-number" type="number" min="-9" max="9" step="0.1" value="2"></label>
+            <label class="coordinate-control" for="odor-y"><span>Y</span><input id="odor-y" type="range" min="-9" max="9" step="0.1" value="-2"><input id="odor-y-number" type="number" min="-9" max="9" step="0.1" value="-2"></label>
+            <label class="coordinate-control" for="odor-z"><span>Z</span><input id="odor-z" type="range" min="0.5" max="7.5" step="0.1" value="1"><input id="odor-z-number" type="number" min="0.5" max="7.5" step="0.1" value="1"></label>
+            <h3>Presets de posición rápida</h3>
+            <div class="preset-controls"><button type="button" data-odor-preset="center">Centro</button><button type="button" data-odor-preset="upper-left">Esquina Superior Izq</button><button type="button" data-odor-preset="lower-right">Esquina Inferior Der</button><button type="button" data-odor-preset="front">Frente a la Mosca</button><button type="button" data-odor-preset="random">Aleatorio</button></div>
+            <label class="toggle-control"><input id="cs-minus-enabled" type="checkbox" checked> Activar fuente secundaria CS-</label>
+            <label class="toggle-control"><input id="click-placement-mode" type="checkbox"> Modo Clic 3D en Pantalla</label>
+          </div>
+        </section>
+      </aside>
+    </main>
+    <script type="importmap">{ "imports": { "three": "https://unpkg.com/three@0.160.0/build/three.module.js" } }</script>
+    <script type="module" src="js/app.js"></script>
+  </body>
+</html>

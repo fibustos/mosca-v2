@@ -16,3 +16,7 @@ __pycache__/
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+
+# Locally generated dashboard artifacts and Hemibrain morphologies
+data/neuron_skeletons/
+legacy/dashboard_3d.html
