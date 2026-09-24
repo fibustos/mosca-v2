@@ -1,0 +1,15 @@
+{
+  "format": "mosca-v2-kc-mbon-weights-v1",
+  "initial_kc_mbon_weights_pa": {
+    "1109223365->5813020828": 0.5,
+    "756196285->612371421": 0.5
+  },
+  "kc_mbon_weights_pa": {
+    "1109223365->5813020828": 0.2752889666279779,
+    "756196285->612371421": 0.2603221532990177
+  },
+  "metadata": {
+    "flying_metabolic_rate": 1.0,
+    "protocol_type": "apetitivo_comida"
+  }
+}
