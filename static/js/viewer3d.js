@@ -1,8 +1,14 @@
+import { FlyKinematics } from "./fly_kinematics.js";
+
 function isTypingTarget(target) {
   return target instanceof HTMLInputElement
     || target instanceof HTMLSelectElement
     || target instanceof HTMLTextAreaElement
     || target?.isContentEditable;
+}
+
+export function createFlyKinematics(legJoints) {
+  return new FlyKinematics(legJoints);
 }
 
 export function logFlyModelHierarchy(model) {

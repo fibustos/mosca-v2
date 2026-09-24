@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,22 @@ prefs.codegen.target = "numpy"
 
 BASE_SYNAPTIC_CURRENT = 200.0 * pA
 INITIAL_KC_MBON_WEIGHT = 0.5
+FRONT_LEG_RATE_WINDOW_MS = 50.0
+FRONT_LEG_RATE_NORMALIZATION_HZ = 60.0
+OPTOGENETIC_CURRENT_GAIN = 4.0
+DEFAULT_LASER_INTENSITY_PA = 50.0
+FRONT_LEG_MOTOR_IDS = (
+    "MN_FL_ext",
+    "MN_FL_flex",
+    "MN_FR_ext",
+    "MN_FR_flex",
+)
+FRONT_LEG_TELEMETRY_IDS = {
+    "FL_ext": "MN_FL_ext",
+    "FL_flex": "MN_FL_flex",
+    "FR_ext": "MN_FR_ext",
+    "FR_flex": "MN_FR_flex",
+}
 
 
 class BrainSNN:
@@ -71,6 +88,11 @@ class BrainSNN:
         self.kenyon_indices = self._indices_for_type("KenyonCell")
         self.output_indices = self._indices_for_type("DescendingNeuron")
         self.dopaminergic_indices = self._indices_for_type("DopaminergicNeuron")
+        self.front_leg_motor_ids = FRONT_LEG_MOTOR_IDS
+        self.laser_intensity = DEFAULT_LASER_INTENSITY_PA
+        self._front_leg_motor_indices = {
+            neuron_id: index for index, neuron_id in enumerate(self.front_leg_motor_ids)
+        }
         self._neuropil_neuron_types = {
             "AL": {"ProjectionNeuron"},
             "MB": {"KenyonCell", "MBON"},
@@ -122,6 +144,52 @@ class BrainSNN:
         self.neurons.i_opto = 0 * pA
         self.neurons.calcium = 0.0
         self._visual_kc_currents = [0.0] * len(self.neuron_records)
+        self.front_leg_motor_neurons = NeuronGroup(
+            len(self.front_leg_motor_ids),
+            model="""
+            dv/dt = (v_rest - v + (i_drive + i_opto + i_syn) / g_leak) / tau_m : volt (unless refractory)
+            di_syn/dt = -i_syn / tau_syn : amp
+            i_drive : amp
+            i_opto : amp
+            """,
+            threshold="v >= v_threshold",
+            reset="v = v_reset",
+            refractory=2 * ms,
+            method="euler",
+            clock=self.clock,
+            namespace={
+                "v_rest": -65 * mV,
+                "v_reset": -65 * mV,
+                "v_threshold": -50 * mV,
+                "tau_m": 20 * ms,
+                "tau_syn": 5 * ms,
+                "g_leak": 10 * nS,
+            },
+            name="front_leg_motor_neurons",
+        )
+        self.front_leg_motor_neurons.v = -65 * mV
+        self.front_leg_motor_neurons.i_syn = 0 * pA
+        self.front_leg_motor_neurons.i_drive = 120 * pA
+        self.front_leg_motor_neurons.i_opto = 0 * pA
+        self.front_leg_motor_synapses = Synapses(
+            self.neurons,
+            self.front_leg_motor_neurons,
+            model="w : amp",
+            on_pre="i_syn_post += w",
+            clock=self.clock,
+            name="descending_to_front_leg_motor_synapses",
+        )
+        motor_source_indices: list[int] = []
+        motor_target_indices: list[int] = []
+        for neuron_index in self.output_indices:
+            side = self.neuron_records[neuron_index]["side"]
+            target_id = "MN_FL_ext" if side == "left" else "MN_FR_ext"
+            motor_source_indices.append(neuron_index)
+            motor_target_indices.append(self._front_leg_motor_indices[target_id])
+        self.front_leg_motor_synapses.connect(
+            i=motor_source_indices, j=motor_target_indices
+        )
+        self.front_leg_motor_synapses.w = 600 * pA
 
         regular_edges = [
             edge
@@ -194,15 +262,23 @@ class BrainSNN:
         self._initial_kc_mbon_weights_pa = self.kc_mbon_weights_pa()
 
         self.spike_monitor = SpikeMonitor(self.neurons)
+        self.front_leg_spike_monitor = SpikeMonitor(self.front_leg_motor_neurons)
         self.voltage_monitor = StateMonitor(self.neurons, "v", record=True, clock=self.clock)
         self.network = Network(
             self.neurons,
             self.synapses,
             self.kc_mbon_synapses,
+            self.front_leg_motor_neurons,
+            self.front_leg_motor_synapses,
             self.spike_monitor,
+            self.front_leg_spike_monitor,
             self.voltage_monitor,
         )
         self._previous_spike_counts = [0] * len(self.neuron_records)
+        self._previous_front_leg_spike_count = 0
+        self._front_leg_spike_times = {
+            neuron_id: deque() for neuron_id in self.front_leg_motor_ids
+        }
 
     @staticmethod
     def _load_circuit(circuit_path: Path) -> dict[str, Any]:
@@ -312,19 +388,44 @@ class BrainSNN:
         self.neurons.i_reward[self.dopaminergic_indices] = -dopamine_current_pA * pA
         self.kc_mbon_synapses.dopamine_trace = -dopamine_current_pA / 500.0
 
-    def stimulate_neuropil(self, target: str, mode: str, current_pA: float = 500.0) -> None:
-        """Inject a one-step ChR2 or NpHR current into a displayed neuropil."""
-        if target not in self._neuropil_neuron_types:
+    def stimulate_neuropil(
+        self,
+        target: str,
+        mode: str,
+        laser_intensity: float | None = None,
+        side: str = "both",
+    ) -> None:
+        """Inject a one-step intensity-scaled ChR2 or NpHR current."""
+        if target not in {*self._neuropil_neuron_types, "VNC"}:
             raise ValueError(f"Unknown optogenetic target '{target}'.")
         if mode not in {"ChR2", "NpHR"}:
             raise ValueError("Optogenetic mode must be 'ChR2' or 'NpHR'.")
+        if side not in {"left", "right", "both"}:
+            raise ValueError("Optogenetic side must be 'left', 'right', or 'both'.")
+        if laser_intensity is None:
+            laser_intensity = self.laser_intensity
         if (
-            not isinstance(current_pA, (int, float))
-            or isinstance(current_pA, bool)
-            or not math.isfinite(current_pA)
-            or current_pA <= 0
+            not isinstance(laser_intensity, (int, float))
+            or isinstance(laser_intensity, bool)
+            or not math.isfinite(laser_intensity)
+            or laser_intensity <= 0
         ):
-            raise ValueError("current_pA must be a positive finite number.")
+            raise ValueError("laser_intensity must be a positive finite number.")
+        current_pA = float(laser_intensity) * OPTOGENETIC_CURRENT_GAIN
+        polarity = 1 if mode == "ChR2" else -1
+        if target == "VNC":
+            indices = [
+                index
+                for index, neuron_id in enumerate(self.front_leg_motor_ids)
+                if "_ext" in neuron_id
+                and (
+                    side == "both"
+                    or (side == "left" and "_FL_" in neuron_id)
+                    or (side == "right" and "_FR_" in neuron_id)
+                )
+            ]
+            self.front_leg_motor_neurons.i_opto[indices] = polarity * current_pA * pA
+            return
         indices = [
             index
             for index, neuron in enumerate(self.neuron_records)
@@ -332,8 +433,18 @@ class BrainSNN:
         ]
         if not indices:
             raise ValueError(f"Neuropil '{target}' has no modeled neurons.")
-        polarity = 1 if mode == "ChR2" else -1
         self.neurons.i_opto[indices] = polarity * current_pA * pA
+
+    def set_laser_intensity(self, laser_intensity: float) -> None:
+        """Set the positive optical drive used by subsequent stimulation."""
+        if (
+            not isinstance(laser_intensity, (int, float))
+            or isinstance(laser_intensity, bool)
+            or not math.isfinite(laser_intensity)
+            or laser_intensity <= 0
+        ):
+            raise ValueError("laser_intensity must be a positive finite number.")
+        self.laser_intensity = float(laser_intensity)
 
     def set_extinction_active(self, active: bool) -> None:
         """Enable recovery while CS+ is present without a dopaminergic reward."""
@@ -556,6 +667,38 @@ class BrainSNN:
             for neuropil, types in self._neuropil_neuron_types.items()
         }
 
+    def _update_front_leg_firing_rates(self) -> None:
+        """Record new VNC spikes and retain exactly the latest 50 ms window."""
+        start = self._previous_front_leg_spike_count
+        spike_indices = np.asarray(self.front_leg_spike_monitor.i[start:], dtype=int)
+        spike_times_ms = np.asarray(
+            self.front_leg_spike_monitor.t[start:] / ms, dtype=float
+        )
+        for neuron_index, spike_time_ms in zip(
+            spike_indices, spike_times_ms, strict=True
+        ):
+            self._front_leg_spike_times[
+                self.front_leg_motor_ids[int(neuron_index)]
+            ].append(float(spike_time_ms))
+        self._previous_front_leg_spike_count = len(self.front_leg_spike_monitor.i)
+        cutoff_ms = float(self.network.t / ms) - FRONT_LEG_RATE_WINDOW_MS
+        for spike_times in self._front_leg_spike_times.values():
+            while spike_times and spike_times[0] < cutoff_ms:
+                spike_times.popleft()
+
+    def front_leg_firing_rates(self) -> dict[str, float]:
+        """Return normalized front-leg motor activity from the latest 50 ms."""
+        window_seconds = FRONT_LEG_RATE_WINDOW_MS / 1_000.0
+        return {
+            telemetry_id: min(
+                1.0,
+                len(self._front_leg_spike_times[neuron_id])
+                / window_seconds
+                / FRONT_LEG_RATE_NORMALIZATION_HZ,
+            )
+            for telemetry_id, neuron_id in FRONT_LEG_TELEMETRY_IDS.items()
+        }
+
     def step(
         self,
         input_currents: Mapping[str, Any] | Sequence[Any],
@@ -593,9 +736,11 @@ class BrainSNN:
 
         self.network.run(dt_ms * ms)
         self._clip_kc_mbon_weights()
+        self._update_front_leg_firing_rates()
         self._visual_kc_currents = [0.0] * len(self.neuron_records)
         self.neurons.i_reward = 0 * pA
         self.neurons.i_opto = 0 * pA
+        self.front_leg_motor_neurons.i_opto = 0 * pA
         current_counts = [int(count) for count in self.spike_monitor.count]
         output: dict[str, dict[str, float | int]] = {}
         for neuron_index in self.output_indices:

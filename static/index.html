@@ -53,19 +53,29 @@
           </section>
         </section>
         <section class="tab-panel" id="panel-brain" role="tabpanel" aria-labelledby="tab-brain" hidden>
-          <div class="brain-views">
+          <nav class="brain-view-tabs" role="tablist" aria-label="Vista de Cerebro 3D y conectoma">
+            <button class="brain-view-tab" type="button" role="tab" id="brain-view-mapping" aria-controls="brain-panel" aria-selected="true" data-brain-view="mapping">🧠 Mapeo 3D GCaMP</button>
+            <button class="brain-view-tab" type="button" role="tab" id="brain-view-connectome" aria-controls="connectome-panel" aria-selected="false" data-brain-view="connectome">🕸️ Grafo Conectómico</button>
+            <button class="brain-view-tab" type="button" role="tab" id="brain-view-split" aria-controls="brain-views" aria-selected="false" data-brain-view="split">⚖️ Vista Dividida</button>
+          </nav>
+          <div class="brain-views" id="brain-views" data-view="mapping">
             <section id="brain-panel"><h2>Cerebro 3D (Fluorescencia GCaMP)</h2><div id="brain-viewport"></div></section>
             <section id="connectome-panel"><h2>Grafo Conectómico del Circuito (18 Neuronas)</h2><canvas id="connectome-graph" aria-label="Grafo conectómico en tiempo real"></canvas></section>
           </div>
           <details class="opto-accordion">
             <summary>Optogenética por neuropilo</summary>
-            <p class="subtle">Pulsos de un paso: ChR2 excita con azul y NpHR inhibe con amarillo.</p>
+            <p class="subtle">ChR2 excita con azul y NpHR inhibe con amarillo durante 350 ms.</p>
             <div class="opto-controls">
               <div class="opto-row"><strong>AL</strong><button class="opto-blue" data-target="AL" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="AL" data-mode="NpHR" type="button">Amarillo</button></div>
               <div class="opto-row"><strong>MB</strong><button class="opto-blue" data-target="MB" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="MB" data-mode="NpHR" type="button">Amarillo</button></div>
               <div class="opto-row"><strong>DAN</strong><button class="opto-blue" data-target="DAN" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="DAN" data-mode="NpHR" type="button">Amarillo</button></div>
               <div class="opto-row"><strong>CX</strong><button class="opto-blue" data-target="CX" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="CX" data-mode="NpHR" type="button">Amarillo</button></div>
               <div class="opto-row"><strong>DN</strong><button class="opto-blue" data-target="DN" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="DN" data-mode="NpHR" type="button">Amarillo</button></div>
+              <div class="opto-row opto-vnc-row"><strong>VNC / Motor</strong><select id="opto-vnc-side" aria-label="Lado motor VNC"><option value="both">L/R</option><option value="left">L</option><option value="right">R</option></select><button class="opto-blue" data-target="VNC" data-mode="ChR2" type="button">Azul</button><button class="opto-yellow" data-target="VNC" data-mode="NpHR" type="button">Amarillo</button></div>
+            </div>
+            <div class="opto-settings">
+              <label for="laser-intensity">Intensidad del Láser (pA / mW/mm²) <output id="laser-intensity-value">50 pA</output><input id="laser-intensity" type="range" min="10" max="150" step="1" value="50"></label>
+              <label class="toggle-control"><input id="opto-continuous" type="checkbox"> Continuo <span aria-hidden="true">/</span> Pulsado (20 Hz)</label>
             </div>
           </details>
         </section>

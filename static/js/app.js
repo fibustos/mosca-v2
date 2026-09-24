@@ -1,5 +1,5 @@
 import { createArenaView } from "./arena_view.js";
-import { createBrainView } from "./brain_render.js";
+import { createBrainView } from "./brain_view.js";
 import { createProtocolView } from "./protocol_view.js";
 import { createTelemetryView } from "./telemetry_view.js";
 import { createViewerShortcuts } from "./viewer3d.js";
@@ -23,6 +23,10 @@ const windSpeedValue = document.querySelector("#wind-speed-value");
 const windAngleValue = document.querySelector("#wind-angle-value");
 const arenaMapSelect = document.querySelector("#arena_map_select");
 const fastForwardToggle = document.querySelector("#fast-forward-enabled");
+const laserIntensity = document.querySelector("#laser-intensity");
+const laserIntensityValue = document.querySelector("#laser-intensity-value");
+const optoContinuous = document.querySelector("#opto-continuous");
+const optoVncSide = document.querySelector("#opto-vnc-side");
 let socket, reconnectTimer = null, latestPose = { x: 0, y: 0, z: 0, yaw: 0 };
 let toastTimer = null;
 let trial = null;
@@ -173,6 +177,7 @@ function updateWindControls(wind) {
 const arena = createArenaView(document.querySelector("#viewport"), (x, y) => sendOdor([x, y, values()[2]]));
 const brain = createBrainView(document.querySelector("#brain-viewport"), document.querySelector("#connectome-graph"));
 const telemetry = createTelemetryView();
+const brainViews = document.querySelector("#brain-views");
 createViewerShortcuts({
   arena,
   onSimulationPause(paused) {
@@ -327,7 +332,24 @@ document.querySelector("#reset").addEventListener("click", () => {
   updateMetabolicTelemetry({ energy: 100, activity_state: "RESTING" });
   send({ command: "reset_fly" });
 });
-document.querySelectorAll("[data-target][data-mode]").forEach((button) => button.addEventListener("click", () => send({ command: "opto_stim", target: button.dataset.target, mode: button.dataset.mode })));
+function updateLaserIntensity() {
+  const intensity = Number(laserIntensity.value);
+  laserIntensityValue.textContent = `${intensity} pA`;
+  send({ command: "set_laser_intensity", laser_intensity: intensity });
+}
+laserIntensity.addEventListener("input", updateLaserIntensity);
+document.querySelectorAll("[data-target][data-mode]").forEach((button) => button.addEventListener("click", () => {
+  const target = button.dataset.target;
+  const mode = button.dataset.mode;
+  const stimulus = {
+    target,
+    mode,
+    side: target === "VNC" ? optoVncSide.value : "both",
+    stimulus_mode: optoContinuous.checked ? "continuous" : "pulsed",
+  };
+  brain.flashOptogeneticTarget(stimulus);
+  send({ command: "opto_stim", ...stimulus });
+}));
 document.querySelector("#reward").addEventListener("click", () => send({ command: "trigger_us", type: "reward" }));
 document.querySelector("#punishment").addEventListener("click", () => send({ command: "trigger_us", type: "punishment" }));
 document.querySelector("#start-trial").addEventListener("click", startTrial);
@@ -340,6 +362,24 @@ document.querySelectorAll(".training-subtab").forEach((button) => button.addEven
     const active = panel.id === button.getAttribute("aria-controls");
     panel.classList.toggle("active", active);
     panel.hidden = !active;
+  });
+}));
+document.querySelectorAll(".brain-view-tab").forEach((button) => button.addEventListener("click", () => {
+  const view = button.dataset.brainView;
+  brainViews.dataset.view = view;
+  document.querySelectorAll(".brain-view-tab").forEach((tab) => tab.setAttribute("aria-selected", String(tab === button)));
+  document.querySelector("#brain-panel").setAttribute("aria-hidden", String(view === "connectome"));
+  document.querySelector("#connectome-panel").setAttribute("aria-hidden", String(view === "mapping"));
+  brain.setGraphLayout(view);
+  const redrawBrainViews = () => {
+    resize();
+    const graph = document.querySelector("#connectome-graph");
+    brain.resizeGraph(graph.clientWidth, graph.clientHeight);
+    brain.redrawGraph();
+  };
+  requestAnimationFrame(() => {
+    redrawBrainViews();
+    setTimeout(redrawBrainViews, 50);
   });
 }));
 document.querySelectorAll(".tab-button").forEach((button) => button.addEventListener("click", () => {
@@ -417,6 +457,7 @@ function connect() {
       arena.update({ ...message, pose });
       brain.update(message);
       brain.updateGraph(message.spikes ?? [], message.weights ?? {});
+      if (message.opto_stimulus) brain.flashOptogeneticTarget(message.opto_stimulus);
       telemetry.update(message);
       protocolView.update(message.protocol);
       if (message.protocol?.progress === 100) disableForgettingAfterTraining();

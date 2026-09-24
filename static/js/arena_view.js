@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { OrbitControls } from "https://unpkg.com/three@0.160.0/examples/jsm/controls/OrbitControls.js";
-import { logFlyModelHierarchy } from "./viewer3d.js";
+import { createFlyKinematics, logFlyModelHierarchy } from "./viewer3d.js";
 
 export const ARENA_MAPS_CONFIG = {
   map_lab_standard: { background: 0x081014, saber: false },
@@ -354,7 +354,6 @@ export function createArenaView(container, onPlaceOdor) {
   fly.name = "Mosca";
   const body = new THREE.Group();
   body.name = "Cuerpo";
-  body.position.z = .27;
   const biomechanicalBrown = new THREE.MeshPhysicalMaterial({
     color: 0x3e241b, roughness: .62, metalness: .08, transmission: .08,
   });
@@ -439,10 +438,15 @@ export function createArenaView(container, onPlaceOdor) {
     return limb;
   }
   const legPositions = [
-    { x: .18, segment: "Front" },
+    { x: .25, segment: "Front" },
     { x: .02, segment: "Middle" },
     { x: -.16, segment: "Back" },
   ];
+  let frontLeftFemur;
+  let frontLeftTibia;
+  let frontRightFemur;
+  let frontRightTibia;
+  const footAnchors = [];
   for (const { x, segment } of legPositions) {
     for (const side of [-1, 1]) {
       const lateral = side < 0 ? "L" : "R";
@@ -450,6 +454,7 @@ export function createArenaView(container, onPlaceOdor) {
       const legGroup = new THREE.Group();
       legGroup.name = `${legName}_Coxa`;
       legGroup.position.set(x, side * .12, -.1);
+      legGroup.rotation.z = side * .18;
 
       const coxaEnd = new THREE.Vector3(0, side * .13, -.015);
       legGroup.add(createLimbMesh(`${legName}_Coxa`, coxaEnd, .038, .048));
@@ -458,15 +463,28 @@ export function createArenaView(container, onPlaceOdor) {
       femurGroup.name = `${legName}_Femur`;
       femurGroup.position.copy(coxaEnd);
       femurGroup.rotation.x = side * .4;
-      const femurEnd = new THREE.Vector3(-.09, side * .16, -.14);
-      femurGroup.add(createLimbMesh(`${legName}_Femur`, femurEnd, .032, .043));
+      const femurEnd = new THREE.Vector3(-.126, side * .224, -.196);
+      femurGroup.add(createLimbMesh(`${legName}_Femur`, femurEnd, .03, .043));
 
       const tibiaGroup = new THREE.Group();
       tibiaGroup.name = `${legName}_Tibia`;
       tibiaGroup.position.copy(femurEnd);
-      tibiaGroup.rotation.x = side * .15;
-      const tibiaEnd = new THREE.Vector3(.12, side * .09, -.16);
-      tibiaGroup.add(createLimbMesh(`${legName}_Tibia`, tibiaEnd, .018, .03));
+      tibiaGroup.rotation.x = -side * 1;
+      const tibiaEnd = new THREE.Vector3(.18, side * .135, -.24);
+      tibiaGroup.add(createLimbMesh(`${legName}_Tibia`, tibiaEnd, .012, .028));
+      const footAnchor = new THREE.Object3D();
+      footAnchor.position.copy(tibiaEnd);
+      tibiaGroup.add(footAnchor);
+      footAnchors.push(footAnchor);
+      if (segment === "Front") {
+        if (side < 0) {
+          frontLeftFemur = femurGroup;
+          frontLeftTibia = tibiaGroup;
+        } else {
+          frontRightFemur = femurGroup;
+          frontRightTibia = tibiaGroup;
+        }
+      }
 
       femurGroup.add(tibiaGroup);
       legGroup.add(femurGroup);
@@ -474,6 +492,12 @@ export function createArenaView(container, onPlaceOdor) {
     }
   }
   body.add(legsGroup);
+  const flyKinematics = createFlyKinematics({
+    frontLeftFemur,
+    frontLeftTibia,
+    frontRightFemur,
+    frontRightTibia,
+  });
   body.traverse((object) => {
     if (object.isMesh && object.material !== wingMaterial) object.castShadow = true;
   });
@@ -500,6 +524,11 @@ export function createArenaView(container, onPlaceOdor) {
   }
   fly.add(body);
   scene.add(fly);
+  const footPosition = new THREE.Vector3();
+  fly.updateMatrixWorld(true);
+  body.position.z = -Math.min(
+    ...footAnchors.map((anchor) => anchor.getWorldPosition(footPosition).z),
+  );
   logFlyModelHierarchy(fly);
   const flyLightsaber = new THREE.Group();
   const flyBlade = new THREE.Mesh(new THREE.CylinderGeometry(.035, .035, .7, 12), new THREE.MeshStandardMaterial({ color: 0x6fffee, emissive: 0x00d7d7, emissiveIntensity: 3 }));
@@ -595,6 +624,7 @@ export function createArenaView(container, onPlaceOdor) {
     legsGroup.position.z = 0;
     legsGroup.rotation.y = 0;
     body.rotation.set(0, 0, 0);
+    flyKinematics.resetRestPose();
   }
 
   function updateCinematicCamera(elapsed) {
@@ -646,6 +676,7 @@ export function createArenaView(container, onPlaceOdor) {
         legsGroup.position.z = THREE.MathUtils.damp(legsGroup.position.z, .08, 12, elapsed);
         legsGroup.rotation.y = THREE.MathUtils.damp(legsGroup.rotation.y, -.35, 12, elapsed);
       }
+      flyKinematics.update(elapsed);
       fly.position.lerp(targetPosition, 1 - Math.exp(-elapsed * 14));
       fly.rotation.y = THREE.MathUtils.damp(fly.rotation.y, targetYaw, 10, elapsed);
       groundShadowMesh.position.set(fly.position.x, fly.position.y, .01);
@@ -814,6 +845,7 @@ export function createArenaView(container, onPlaceOdor) {
           left: finiteNumber(data?.dn_activation?.left ?? data?.dn_spikes?.left),
           right: finiteNumber(data?.dn_activation?.right ?? data?.dn_spikes?.right),
         };
+        flyKinematics.updateFromTelemetry(data);
         updateWind(data?.wind);
         updateSources(data?.odor_sources ?? {}, data?.trial?.automatic, data?.wind);
         if (typeof data?.jedi?.enabled === "boolean") setJediBotEnabled(data.jedi.enabled);
