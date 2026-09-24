@@ -1,0 +1,15 @@
+{
+  "format": "mosca-v2-kc-mbon-weights-v1",
+  "initial_kc_mbon_weights_pa": {
+    "1109223365->5813020828": 0.5,
+    "756196285->612371421": 0.5
+  },
+  "kc_mbon_weights_pa": {
+    "1109223365->5813020828": 0.5,
+    "756196285->612371421": 0.5
+  },
+  "metadata": {
+    "flying_metabolic_rate": 0.5,
+    "protocol_type": "lightsaber_fencing"
+  }
+}

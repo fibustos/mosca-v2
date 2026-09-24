@@ -7,11 +7,13 @@ Run ``python brain_snn.py`` to inject both projection-neuron channels for
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
 import matplotlib.pyplot as plt
+import numpy as np
 from brian2 import (
     Clock,
     NeuronGroup,
@@ -31,6 +33,9 @@ from config.settings import CIRCUIT_DATA_PATH
 
 prefs.codegen.target = "numpy"
 
+BASE_SYNAPTIC_CURRENT = 200.0 * pA
+INITIAL_KC_MBON_WEIGHT = 0.5
+
 
 class BrainSNN:
     """Leaky integrate-and-fire realization of a Hemibrain circuit JSON file."""
@@ -42,6 +47,8 @@ class BrainSNN:
         integration_dt: Any = 0.1 * ms,
         tau_decay_ms: float = 10_000.0,
         extinction_tau_ms: float | None = None,
+        enable_synaptic_decay: bool = True,
+        decay_rate: float | None = None,
     ) -> None:
         if tau_decay_ms <= 0:
             raise ValueError("tau_decay_ms must be positive.")
@@ -49,12 +56,19 @@ class BrainSNN:
             extinction_tau_ms = tau_decay_ms / 5
         if extinction_tau_ms <= 0:
             raise ValueError("extinction_tau_ms must be positive.")
+        if not isinstance(enable_synaptic_decay, bool):
+            raise ValueError("enable_synaptic_decay must be a boolean.")
+        if decay_rate is None:
+            decay_rate = 1.0 / tau_decay_ms
+        if not math.isfinite(decay_rate) or decay_rate < 0:
+            raise ValueError("decay_rate must be a finite, non-negative value in ms^-1.")
         circuit = self._load_circuit(Path(circuit_path))
         self.neuron_records = circuit["neurons"]
         self.id_to_index = {
             neuron["id"]: index for index, neuron in enumerate(self.neuron_records)
         }
         self.input_indices = self._indices_for_type("ProjectionNeuron")
+        self.kenyon_indices = self._indices_for_type("KenyonCell")
         self.output_indices = self._indices_for_type("DescendingNeuron")
         self.dopaminergic_indices = self._indices_for_type("DopaminergicNeuron")
         self._neuropil_neuron_types = {
@@ -107,6 +121,7 @@ class BrainSNN:
         self.neurons.i_reward = 0 * pA
         self.neurons.i_opto = 0 * pA
         self.neurons.calcium = 0.0
+        self._visual_kc_currents = [0.0] * len(self.neuron_records)
 
         regular_edges = [
             edge
@@ -138,42 +153,44 @@ class BrainSNN:
             for edge in regular_edges
         ]
 
-        max_plastic_weight = max(edge["weight"] for edge in plastic_edges) * weight_per_synapse * 2
         self.tau_decay_ms = tau_decay_ms
         self.extinction_tau_ms = extinction_tau_ms
+        self.enable_synaptic_decay = enable_synaptic_decay
+        self.decay_rate = decay_rate
         self.kc_mbon_synapses = Synapses(
             self.neurons,
             self.neurons,
             model="""
-            w_initial : amp (constant)
+            w_initial : 1 (constant)
             ddopamine_trace/dt = -dopamine_trace / tau_dopamine : 1 (clock-driven)
-            dw/dt = (w_initial - w) / tau_decay
-                + extinction_active * (w_initial - w) / tau_extinction : amp (clock-driven)
+            dw/dt = enable_synaptic_decay * decay_rate * (w_initial - w)
+                + extinction_active * (w_initial - w) / tau_extinction : 1 (clock-driven)
             extinction_active : 1
+            enable_synaptic_decay : 1
+            decay_rate : Hz
             """,
-            on_pre="""
-            i_syn_post += w
-            w = clip(w * (1 - learning_rate * dopamine_trace), w_min, w_max)
-            """,
+            on_pre=(
+                "i_syn_post += w * base_synaptic_current\n"
+                "w = clip(w * (1 - learning_rate * dopamine_trace), "
+                "0.0, 1.0)"
+            ),
             clock=self.clock,
             namespace={
                 "tau_dopamine": 100 * ms,
                 "learning_rate": 0.02,
-                "w_min": 0 * pA,
-                "w_max": max_plastic_weight,
-                "tau_decay": tau_decay_ms * ms,
+                "base_synaptic_current": BASE_SYNAPTIC_CURRENT,
                 "tau_extinction": extinction_tau_ms * ms,
             },
         )
         kc_indices = [self.id_to_index[edge["source"]] for edge in plastic_edges]
         mbon_indices = [self.id_to_index[edge["target"]] for edge in plastic_edges]
         self.kc_mbon_synapses.connect(i=kc_indices, j=mbon_indices)
-        self.kc_mbon_synapses.w = [
-            edge["weight"] * weight_per_synapse for edge in plastic_edges
-        ]
+        self.kc_mbon_synapses.w = INITIAL_KC_MBON_WEIGHT
         self.kc_mbon_synapses.w_initial = self.kc_mbon_synapses.w
         self.kc_mbon_synapses.dopamine_trace = 0
         self.kc_mbon_synapses.extinction_active = 0
+        self.kc_mbon_synapses.enable_synaptic_decay = int(enable_synaptic_decay)
+        self.kc_mbon_synapses.decay_rate = decay_rate / ms
         self._initial_kc_mbon_weights_pa = self.kc_mbon_weights_pa()
 
         self.spike_monitor = SpikeMonitor(self.neurons)
@@ -249,7 +266,21 @@ class BrainSNN:
 
     @staticmethod
     def _current(value: Any) -> Any:
-        return value if hasattr(value, "dim") else float(value) * pA
+        if hasattr(value, "dim"):
+            try:
+                current_pa = float(value / pA)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Input current must be a finite current quantity.") from error
+            if not math.isfinite(current_pa):
+                raise ValueError("Input current must be finite.")
+            return value
+        try:
+            current_pa = float(value)
+        except (TypeError, ValueError) as error:
+            raise ValueError("Input current must be numeric.") from error
+        if not math.isfinite(current_pa):
+            raise ValueError("Input current must be finite.")
+        return current_pa * pA
 
     def reward(self, dopamine_current_pA: float) -> None:
         """Inject a one-step reward current into DANs and enable KC→MBON depression.
@@ -258,16 +289,26 @@ class BrainSNN:
         KC→MBON synapse. The trace decays with ``tau_dopamine``, modeling the
         temporal eligibility window around the DAN response.
         """
-        if dopamine_current_pA <= 0:
-            raise ValueError("dopamine_current_pA must be positive.")
+        if (
+            not isinstance(dopamine_current_pA, (int, float))
+            or isinstance(dopamine_current_pA, bool)
+            or not math.isfinite(dopamine_current_pA)
+            or dopamine_current_pA <= 0
+        ):
+            raise ValueError("dopamine_current_pA must be a positive finite number.")
 
         self.neurons.i_reward[self.dopaminergic_indices] = dopamine_current_pA * pA
         self.kc_mbon_synapses.dopamine_trace = dopamine_current_pA / 500.0
 
     def punish(self, dopamine_current_pA: float) -> None:
         """Inject an aversive US that potentiates active KC→MBON synapses."""
-        if dopamine_current_pA <= 0:
-            raise ValueError("dopamine_current_pA must be positive.")
+        if (
+            not isinstance(dopamine_current_pA, (int, float))
+            or isinstance(dopamine_current_pA, bool)
+            or not math.isfinite(dopamine_current_pA)
+            or dopamine_current_pA <= 0
+        ):
+            raise ValueError("dopamine_current_pA must be a positive finite number.")
         self.neurons.i_reward[self.dopaminergic_indices] = -dopamine_current_pA * pA
         self.kc_mbon_synapses.dopamine_trace = -dopamine_current_pA / 500.0
 
@@ -277,8 +318,13 @@ class BrainSNN:
             raise ValueError(f"Unknown optogenetic target '{target}'.")
         if mode not in {"ChR2", "NpHR"}:
             raise ValueError("Optogenetic mode must be 'ChR2' or 'NpHR'.")
-        if current_pA <= 0:
-            raise ValueError("current_pA must be positive.")
+        if (
+            not isinstance(current_pA, (int, float))
+            or isinstance(current_pA, bool)
+            or not math.isfinite(current_pA)
+            or current_pA <= 0
+        ):
+            raise ValueError("current_pA must be a positive finite number.")
         indices = [
             index
             for index, neuron in enumerate(self.neuron_records)
@@ -293,15 +339,53 @@ class BrainSNN:
         """Enable recovery while CS+ is present without a dopaminergic reward."""
         self.kc_mbon_synapses.extinction_active = 1 if active else 0
 
+    def set_visual_kc_stimulus(self, activation: float, bearing_radians: float) -> None:
+        """Encode a visual target into the KC population for one integration step."""
+        if not math.isfinite(activation) or not 0.0 <= activation <= 1.0:
+            raise ValueError("visual KC activation must be finite and in [0, 1].")
+        if not math.isfinite(bearing_radians):
+            raise ValueError("visual target bearing must be finite.")
+
+        self._visual_kc_currents = [0.0] * len(self.neuron_records)
+        lateral_bias = math.sin(bearing_radians)
+        for neuron_index in self.kenyon_indices:
+            side = self.neuron_records[neuron_index]["side"]
+            side_bias = lateral_bias if side == "left" else -lateral_bias
+            gain = 0.75 + 0.25 * max(0.0, side_bias)
+            self._visual_kc_currents[neuron_index] = 400.0 * activation * gain
+
+    def set_synaptic_decay(self, enabled: bool, rate: float | None = None) -> None:
+        """Configure passive KC→MBON recovery without changing active extinction."""
+        if not isinstance(enabled, bool):
+            raise ValueError("'enabled' must be a boolean.")
+        if rate is not None:
+            if not isinstance(rate, (int, float)) or isinstance(rate, bool):
+                raise ValueError("'rate' must be a number in ms^-1.")
+            rate = float(rate)
+            if not math.isfinite(rate) or rate < 0:
+                raise ValueError("'rate' must be a finite, non-negative number in ms^-1.")
+            self.decay_rate = rate
+            self.kc_mbon_synapses.decay_rate = rate / ms
+        self.enable_synaptic_decay = enabled
+        self.kc_mbon_synapses.enable_synaptic_decay = int(enabled)
+
+    def _clip_kc_mbon_weights(self) -> None:
+        """Keep runtime plasticity in the normalized closed interval."""
+        self.kc_mbon_synapses.w = np.clip(
+            np.asarray(self.kc_mbon_synapses.w[:], dtype=float),
+            0.0,
+            1.0,
+        )
+
     def memory_recovery_rates_pa_per_ms(self) -> dict[str, float]:
-        """Return mean passive and CS+-exposure recovery rates in pA/ms."""
+        """Return mean passive and CS+-exposure recovery rates in normalized units/ms."""
         current_weights = self.kc_mbon_weights_pa()
         deficits = [
             initial_weight - current_weights[connection]
             for connection, initial_weight in self._initial_kc_mbon_weights_pa.items()
         ]
         mean_deficit = sum(deficits) / len(deficits)
-        passive = mean_deficit / self.tau_decay_ms
+        passive = mean_deficit * self.decay_rate if self.enable_synaptic_decay else 0.0
         active = (
             mean_deficit / self.extinction_tau_ms
             if bool(self.kc_mbon_synapses.extinction_active[0])
@@ -310,14 +394,18 @@ class BrainSNN:
         return {"passive": passive, "active_extinction": active}
 
     def mean_kc_mbon_weight_pa(self) -> float:
-        """Return the mean current weight of the plastic KC→MBON synapses in pA."""
-        weights = [float(weight / pA) for weight in self.kc_mbon_synapses.w]
+        """Return the mean normalized KC→MBON weight."""
+        weights = [float(weight) for weight in self.kc_mbon_synapses.w]
         return sum(weights) / len(weights)
 
     def kc_mbon_weights_pa(self) -> dict[str, float]:
-        """Return each plastic KC→MBON weight in pA, keyed by circuit endpoints."""
+        """Return normalized plastic weights, keyed by circuit endpoints.
+
+        The legacy ``_pa`` suffix is retained for profile compatibility; currents
+        are derived at transmission time using ``BASE_SYNAPTIC_CURRENT``.
+        """
         return {
-            f"{edge['source']}->{edge['target']}": float(weight / pA)
+            f"{edge['source']}->{edge['target']}": float(weight)
             for edge, weight in zip(
                 self._plastic_edges,
                 self.kc_mbon_synapses.w,
@@ -325,12 +413,21 @@ class BrainSNN:
             )
         }
 
+    def kc_mbon_weight_summary(self) -> dict[str, float]:
+        """Return min, max, and mean normalized KC→MBON weights for diagnostics."""
+        weights = list(self.kc_mbon_weights_pa().values())
+        return {
+            "min_w": min(weights),
+            "max_w": max(weights),
+            "mean_w": sum(weights) / len(weights),
+        }
+
     def initial_kc_mbon_weights_pa(self) -> dict[str, float]:
-        """Return a copy of the immutable KC→MBON weights at simulation start."""
+        """Return a copy of the normalized KC→MBON weights at simulation start."""
         return self._initial_kc_mbon_weights_pa.copy()
 
     def initial_mean_kc_mbon_weight_pa(self) -> float:
-        """Return the mean KC→MBON weight before any dopamine-modulated updates."""
+        """Return the mean normalized weight before dopamine-modulated updates."""
         return sum(self._initial_kc_mbon_weights_pa.values()) / len(
             self._initial_kc_mbon_weights_pa
         )
@@ -372,23 +469,39 @@ class BrainSNN:
             ordered_weights = [float(weights[f"{edge['source']}->{edge['target']}"]) for edge in self._plastic_edges]
         except (TypeError, ValueError) as error:
             raise ValueError("All KC→MBON weights must be numeric.") from error
-        if any(weight < 0 for weight in ordered_weights):
-            raise ValueError("KC→MBON weights must be non-negative.")
+        if any(not math.isfinite(weight) or weight < 0 for weight in ordered_weights):
+            raise ValueError("KC→MBON weights must be finite and non-negative.")
+        ordered_weights = np.clip(
+            np.asarray(ordered_weights, dtype=float), 0.0, 1.0
+        ).tolist()
         initial_weights = payload.get("initial_kc_mbon_weights_pa", weights)
         if not isinstance(initial_weights, dict) or set(initial_weights) != expected:
             raise ValueError("Initial KC→MBON weights do not match the loaded circuit.")
         try:
-            self._initial_kc_mbon_weights_pa = {
-                connection: float(weight)
-                for connection, weight in initial_weights.items()
-            }
+            ordered_initial_weights = [
+                float(initial_weights[f"{edge['source']}->{edge['target']}"])
+                for edge in self._plastic_edges
+            ]
         except (TypeError, ValueError) as error:
             raise ValueError("All initial KC→MBON weights must be numeric.") from error
-        if any(weight < 0 for weight in self._initial_kc_mbon_weights_pa.values()):
-            raise ValueError("Initial KC→MBON weights must be non-negative.")
-        self.kc_mbon_synapses.w = [weight * pA for weight in ordered_weights]
+        if any(
+            not math.isfinite(weight) or weight < 0
+            for weight in ordered_initial_weights
+        ):
+            raise ValueError("Initial KC→MBON weights must be finite and non-negative.")
+        arr_initial_w = np.clip(
+            np.asarray(ordered_initial_weights, dtype=float), 0.0, 1.0
+        )
+        self._initial_kc_mbon_weights_pa = dict(
+            zip(
+                (f"{edge['source']}->{edge['target']}" for edge in self._plastic_edges),
+                arr_initial_w.tolist(),
+                strict=True,
+            )
+        )
+        self.kc_mbon_synapses.w = ordered_weights
         self.kc_mbon_synapses.w_initial = [
-            self._initial_kc_mbon_weights_pa[f"{edge['source']}->{edge['target']}"] * pA
+            self._initial_kc_mbon_weights_pa[f"{edge['source']}->{edge['target']}"]
             for edge in self._plastic_edges
         ]
 
@@ -454,8 +567,13 @@ class BrainSNN:
         values target PNs in the ordering stored in ``circuit_data.json``.
         Numeric currents are interpreted as pA; Brian2 quantities are accepted.
         """
-        if dt_ms <= 0:
-            raise ValueError("dt_ms must be positive.")
+        if (
+            not isinstance(dt_ms, (int, float))
+            or isinstance(dt_ms, bool)
+            or not math.isfinite(dt_ms)
+            or dt_ms <= 0
+        ):
+            raise ValueError("dt_ms must be a positive finite number.")
 
         self.neurons.i_input = 0 * pA
         if isinstance(input_currents, Mapping):
@@ -468,8 +586,14 @@ class BrainSNN:
                 )
             for neuron_index, current in zip(self.input_indices, input_currents, strict=True):
                 self.neurons.i_input[neuron_index] = self._current(current)
+        for neuron_index in self.kenyon_indices:
+            visual_current = self._visual_kc_currents[neuron_index]
+            if visual_current:
+                self.neurons.i_input[neuron_index] += visual_current * pA
 
         self.network.run(dt_ms * ms)
+        self._clip_kc_mbon_weights()
+        self._visual_kc_currents = [0.0] * len(self.neuron_records)
         self.neurons.i_reward = 0 * pA
         self.neurons.i_opto = 0 * pA
         current_counts = [int(count) for count in self.spike_monitor.count]
