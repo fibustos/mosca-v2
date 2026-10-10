@@ -8,7 +8,14 @@ const OPTO_GLOW_COLORS = {
   ChR2: new THREE.Color("#00f3ff"),
   NpHR: new THREE.Color("#ffcc00"),
 };
-const VNC_MOTOR_NEURON_IDS = ["MN_FL_ext", "MN_FL_flex", "MN_FR_ext", "MN_FR_flex", "MN_HL_ext", "MN_HR_ext"];
+const VNC_GANGLIA = [
+  { id: "T1_L", position: [-.42, -1.5, -.28] },
+  { id: "T1_R", position: [.42, -1.5, -.28] },
+  { id: "T2_L", position: [-.42, -1.78, -.22] },
+  { id: "T2_R", position: [.42, -1.78, -.22] },
+  { id: "T3_L", position: [-.42, -2.06, -.28] },
+  { id: "T3_R", position: [.42, -2.06, -.28] },
+];
 
 function gaussian(random) {
   let a = 0, b = 0;
@@ -128,10 +135,6 @@ function createSomas() {
     DAN: [[-.05, 1.22, 1.04]],
     CX: [[0, -.1, .34], [.18, -.14, .3]],
     DN: [[-.14, -1.03, -.08], [.18, -1.18, -.04]],
-    VNC: [
-      [-.42, -1.62, -.28], [-.16, -1.78, -.17], [.16, -1.78, -.17], [.42, -1.62, -.28],
-      [-.34, -1.98, -.31], [.34, -1.98, -.31],
-    ],
   };
   Object.entries(regions).forEach(([region, points]) => points.forEach((point, index) => {
     const color = region === "DAN" ? "#ff55de" : region === "MBON" ? "#63eaff" : "#ffe46f";
@@ -146,10 +149,26 @@ function createSomas() {
     });
     const soma = new THREE.Mesh(geometry, material);
     soma.position.fromArray(point);
-    soma.name = region === "VNC" ? VNC_MOTOR_NEURON_IDS[index] : region;
-    soma.userData = { region, phase: index * .7, baseScale: region === "VNC" ? 1.15 : 1 };
+    soma.name = region;
+    soma.userData = { region, phase: index * .7, baseScale: 1 };
     somas.add(soma);
   }));
+  VNC_GANGLIA.forEach(({ id, position }, index) => {
+    const material = new THREE.MeshStandardMaterial({
+      color: "#63eaff",
+      emissive: "#00d9ff",
+      emissiveIntensity: .65,
+      transparent: true,
+      opacity: .9,
+      blending: THREE.AdditiveBlending,
+      depthWrite: false,
+    });
+    const soma = new THREE.Mesh(geometry, material);
+    soma.name = id;
+    soma.position.fromArray(position);
+    soma.userData = { region: "VNC", ganglion: id, phase: index * .7, baseScale: 1.35 };
+    somas.add(soma);
+  });
   return somas;
 }
 
@@ -169,10 +188,11 @@ function createVncStructure() {
   cord.position.set(0, -1.77, -.26);
   cord.scale.set(.7, .5, .34);
   vnc.add(cord);
-  [-.32, 0, .32].forEach((x, index) => {
+  VNC_GANGLIA.forEach(({ id, position }, index) => {
     const ganglion = new THREE.Mesh(new THREE.SphereGeometry(.18, 18, 14), material.clone());
-    ganglion.position.set(x, -1.8 + Math.abs(x) * .2, -.22);
-    ganglion.userData.phase = index;
+    ganglion.position.fromArray(position);
+    ganglion.scale.set(1.5, .85, .8);
+    ganglion.userData = { ganglion: id, phase: index };
     vnc.add(ganglion);
   });
   return vnc;
@@ -184,14 +204,19 @@ function createAxonFibers() {
     { regions: ["KC", "MBON"], color: 0x63eaff, points: [[-.3, .72, .42], [-.05, .6, .6], [.23, .28, .45], [.5, .14, .25]] },
     { regions: ["DAN", "MBON"], color: 0xff55de, points: [[-.05, 1.22, 1.04], [-.13, .82, .82], [.12, .5, .6], [.5, .14, .25]] },
     { regions: ["CX", "DN"], color: 0x9185ff, points: [[0, -.1, .34], [.3, -.38, .22], [.2, -.73, .05], [.18, -1.18, -.04]] },
-    { regions: ["DN", "VNC"], color: 0x60ed9a, points: [[.18, -1.18, -.04], [.08, -1.35, -.12], [.25, -1.55, -.28]] },
-    { regions: ["DN", "VNC"], color: 0x60ed9a, points: [[-.14, -1.03, -.08], [-.35, -1.34, -.13], [-.42, -1.62, -.28]] },
-    { regions: ["DN", "VNC"], color: 0x63eaff, points: [[.18, -1.18, -.04], [.42, -1.42, -.11], [.42, -1.62, -.28]] },
-    { regions: ["VNC"], color: 0x63eaff, points: [[-.42, -1.62, -.28], [-.2, -1.78, -.17], [.16, -1.78, -.17], [.42, -1.62, -.28]] },
-    { regions: ["VNC"], color: 0x60ed9a, points: [[-.34, -1.98, -.31], [-.12, -1.83, -.24], [.34, -1.98, -.31]] },
+    { regions: ["DN", "VNC"], ganglia: ["T1_L"], color: 0x60ed9a, points: [[-.14, -1.03, -.08], [-.32, -1.26, -.13], [-.42, -1.5, -.28]] },
+    { regions: ["DN", "VNC"], ganglia: ["T1_R"], color: 0x60ed9a, points: [[.18, -1.18, -.04], [.32, -1.32, -.11], [.42, -1.5, -.28]] },
+    { regions: ["DN", "VNC"], ganglia: ["T2_L"], color: 0x63eaff, points: [[-.14, -1.03, -.08], [-.3, -1.45, -.13], [-.42, -1.78, -.22]] },
+    { regions: ["DN", "VNC"], ganglia: ["T2_R"], color: 0x63eaff, points: [[.18, -1.18, -.04], [.3, -1.48, -.11], [.42, -1.78, -.22]] },
+    { regions: ["DN", "VNC"], ganglia: ["T3_L"], color: 0x9185ff, points: [[-.14, -1.03, -.08], [-.28, -1.65, -.17], [-.42, -2.06, -.28]] },
+    { regions: ["DN", "VNC"], ganglia: ["T3_R"], color: 0x9185ff, points: [[.18, -1.18, -.04], [.28, -1.68, -.17], [.42, -2.06, -.28]] },
+    { regions: ["VNC"], ganglia: ["T1_L", "T2_L"], color: 0x63eaff, points: [[-.42, -1.5, -.28], [-.5, -1.64, -.2], [-.42, -1.78, -.22]] },
+    { regions: ["VNC"], ganglia: ["T2_L", "T3_L"], color: 0x63eaff, points: [[-.42, -1.78, -.22], [-.5, -1.92, -.25], [-.42, -2.06, -.28]] },
+    { regions: ["VNC"], ganglia: ["T1_R", "T2_R"], color: 0x60ed9a, points: [[.42, -1.5, -.28], [.5, -1.64, -.2], [.42, -1.78, -.22]] },
+    { regions: ["VNC"], ganglia: ["T2_R", "T3_R"], color: 0x60ed9a, points: [[.42, -1.78, -.22], [.5, -1.92, -.25], [.42, -2.06, -.28]] },
   ];
   const fibers = new THREE.Group();
-  paths.forEach(({ regions, color, points }, pathIndex) => {
+  paths.forEach(({ regions, ganglia = [], color, points }, pathIndex) => {
     const curve = new THREE.CatmullRomCurve3(points.map((point) => new THREE.Vector3(...point)));
     const core = new THREE.Mesh(
       new THREE.TubeGeometry(curve, 40, .032, 10, false),
@@ -205,7 +230,7 @@ function createAxonFibers() {
         depthWrite: false,
       }),
     );
-    core.userData = { regions, phase: pathIndex * .85, baseOpacity: .72 };
+    core.userData = { regions, ganglia, phase: pathIndex * .85, baseOpacity: .72 };
     fibers.add(core);
   });
   return fibers;
@@ -287,6 +312,7 @@ export function createBrainView(container, graph) {
 
   const context = graph.getContext("2d");
   const initialWeights = new Map(), flashes = new Map(), optoFlashes = new Map();
+  const vncGanglionActivities = new Map();
   let nodes = [], weights = {}, graphLayout = "mapping";
 
   function normalizedIdentifier(value) {
@@ -365,18 +391,54 @@ export function createBrainView(container, graph) {
       }
       context.stroke();
     });
+    const vncNodes = new Map(
+      nodes.filter((node) => graphGroup(node) === "VNC").map((node) => [node.label, positionsById.get(node.id)]),
+    );
+    const drawVncConnection = (source, target, color, dashed = false) => {
+      if (!source || !target) return;
+      context.save();
+      context.strokeStyle = color;
+      context.lineWidth = (fullGraph ? 1.8 : 1.2) * pixelRatio;
+      if (dashed) context.setLineDash([4 * pixelRatio, 3 * pixelRatio]);
+      context.beginPath();
+      context.moveTo(source.x, source.y);
+      context.quadraticCurveTo(
+        (source.x + target.x) / 2,
+        (source.y + target.y) / 2 + (source.x === target.x ? 0 : -12 * pixelRatio),
+        target.x,
+        target.y,
+      );
+      context.stroke();
+      context.restore();
+    };
+    const dnBySide = new Map(
+      nodes.filter((node) => graphGroup(node) === "DN").map((node) => [node.side, positionsById.get(node.id)]),
+    );
+    ["T1", "T2", "T3"].forEach((segment) => {
+      drawVncConnection(dnBySide.get("left"), vncNodes.get(`${segment}_L`), "rgba(99, 234, 255, .56)");
+      drawVncConnection(dnBySide.get("right"), vncNodes.get(`${segment}_R`), "rgba(99, 234, 255, .56)");
+      drawVncConnection(vncNodes.get(`${segment}_L`), vncNodes.get(`${segment}_R`), "rgba(255, 85, 222, .55)", true);
+      drawVncConnection(vncNodes.get(`${segment}_R`), vncNodes.get(`${segment}_L`), "rgba(255, 85, 222, .35)", true);
+    });
+    ["L", "R"].forEach((side) => {
+      drawVncConnection(vncNodes.get(`T1_${side}`), vncNodes.get(`T2_${side}`), "rgba(96, 237, 154, .62)");
+      drawVncConnection(vncNodes.get(`T2_${side}`), vncNodes.get(`T3_${side}`), "rgba(96, 237, 154, .62)");
+    });
     positionsById.forEach(({ x, y, node }) => {
       const spikeIntensity = THREE.MathUtils.clamp(1 - (now - (flashes.get(String(node.id)) ?? -Infinity)) / 280, 0, 1);
       const displayedGroup = graphGroup(node);
-      const opto = optoFlashes.get(displayedGroup) ?? (displayedGroup === "KC" || displayedGroup === "MBON" ? optoFlashes.get("MB") : undefined);
+      const opto = optoFlashes.get(node.label)
+        ?? optoFlashes.get(displayedGroup)
+        ?? (displayedGroup === "KC" || displayedGroup === "MBON" ? optoFlashes.get("MB") : undefined);
       const matchingSide = node.group !== "VNC" || !opto?.side || opto.side === "both" || node.side === opto.side;
       const optoIntensity = matchingSide
         ? THREE.MathUtils.clamp(1 - (now - (opto?.at ?? -Infinity)) / 380, 0, 1)
         : 0;
-      const intensity = Math.max(spikeIntensity, optoIntensity);
+      const ganglionActivity = displayedGroup === "VNC" ? ganglionIntensity(node.label, now) : 0;
+      const intensity = Math.max(spikeIntensity, optoIntensity, ganglionActivity);
       if (!intensity) flashes.delete(String(node.id));
       const optoColor = opto?.mode === "NpHR" ? "#ffcc00" : "#00f3ff";
-      context.fillStyle = optoIntensity ? optoColor : intensity ? "#fff59d" : "#9ae6b4";
+      context.fillStyle = optoIntensity ? optoColor : intensity ? "#fff59d" : displayedGroup === "VNC" ? "#63eaff" : "#9ae6b4";
       context.shadowColor = optoIntensity ? optoColor : "#ffeb3b";
       context.shadowBlur = intensity * 20 * pixelRatio;
       context.beginPath();
@@ -426,6 +488,13 @@ export function createBrainView(container, graph) {
     return Math.max(activity, optoIntensity);
   }
 
+  function ganglionIntensity(ganglion, now) {
+    const activity = vncGanglionActivities.get(ganglion) ?? 0;
+    const opto = optoFlashes.get(ganglion);
+    const optoIntensity = THREE.MathUtils.clamp(1 - (now - (opto?.at ?? -Infinity)) / 380, 0, 1);
+    return Math.max(activity, optoIntensity);
+  }
+
   return {
     update(data) {
       const calcium = data.calcium?.neuropils ?? {};
@@ -433,6 +502,11 @@ export function createBrainView(container, graph) {
         const target = THREE.MathUtils.clamp(Number(calcium[region]) || 0, 0, 1);
         const previous = THREE.MathUtils.clamp(activities.get(region) ?? 0, 0, 1);
         activities.set(region, THREE.MathUtils.clamp(Math.max(target, previous * .9), 0, 1));
+      });
+      Object.entries(data.vnc_legs_neuro ?? {}).forEach(([ganglion, state]) => {
+        const target = THREE.MathUtils.clamp(Math.max(Number(state?.ext) || 0, Number(state?.flex) || 0), 0, 1);
+        const previous = vncGanglionActivities.get(ganglion) ?? 0;
+        vncGanglionActivities.set(ganglion, Math.max(target, previous * .9));
       });
       if (data.connectome) nodes = data.connectome.nodes ?? [];
       updateParticles();
@@ -449,11 +523,12 @@ export function createBrainView(container, graph) {
       });
       drawGraph();
     },
-    flashOptogeneticTarget({ target, mode }) {
+    flashOptogeneticTarget({ target, mode, ganglion, side }) {
       if (!target || !mode) return;
-      optoFlashes.set(target, { at: performance.now(), mode });
+      optoFlashes.set(ganglion ?? target, { at: performance.now(), mode, side });
       const flashIntensity = mode === "NpHR" ? .82 : .95;
       activities.set(target, flashIntensity);
+      if (ganglion) vncGanglionActivities.set(ganglion, flashIntensity);
       updateParticles();
       drawGraph();
     },
@@ -484,24 +559,31 @@ export function createBrainView(container, graph) {
       const now = performance.now();
       brainEnvelope.material.emissiveIntensity = .35 + .12 * Math.sin(now * .0012);
       axonFibers.children.forEach((fiber) => {
-        const intensity = Math.max(...fiber.userData.regions.map((region) => activeIntensity(region, now)));
+        const intensity = Math.max(
+          ...fiber.userData.regions.map((region) => activeIntensity(region, now)),
+          ...fiber.userData.ganglia.map((ganglion) => ganglionIntensity(ganglion, now)),
+        );
         const pulse = .5 + .5 * Math.sin(now * .002 + fiber.userData.phase);
         fiber.material.opacity = fiber.userData.baseOpacity * (.65 + intensity * .35) * (.8 + pulse * .2);
         fiber.material.emissiveIntensity = .4 + intensity * 2.2;
         fiber.scale.setScalar(1 + intensity * .15);
       });
       somas.children.forEach((soma) => {
-        const intensity = activeIntensity(soma.userData.region, now);
+        const intensity = soma.userData.ganglion
+          ? ganglionIntensity(soma.userData.ganglion, now)
+          : activeIntensity(soma.userData.region, now);
         const pulse = .5 + .5 * Math.sin(now * .008 + soma.userData.phase);
         const scale = soma.userData.baseScale * (1 + intensity * (.18 + pulse * .2));
         soma.scale.setScalar(scale);
         soma.material.emissiveIntensity = .45 + intensity * 3.1;
         soma.material.opacity = .7 + intensity * .3;
       });
-      const vncIntensity = activeIntensity("VNC", now);
       vncStructure.children.forEach((part, index) => {
-        part.material.emissiveIntensity = .25 + vncIntensity * 1.8;
-        const pulse = 1 + vncIntensity * (.06 + .03 * Math.sin(now * .006 + index));
+        const intensity = part.userData.ganglion
+          ? ganglionIntensity(part.userData.ganglion, now)
+          : activeIntensity("VNC", now);
+        part.material.emissiveIntensity = .25 + intensity * 1.8;
+        const pulse = 1 + intensity * (.06 + .03 * Math.sin(now * .006 + index));
         part.scale.setScalar(pulse);
       });
       drawGraph();

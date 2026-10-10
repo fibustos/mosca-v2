@@ -442,10 +442,7 @@ export function createArenaView(container, onPlaceOdor) {
     { x: .02, segment: "Middle" },
     { x: -.16, segment: "Back" },
   ];
-  let frontLeftFemur;
-  let frontLeftTibia;
-  let frontRightFemur;
-  let frontRightTibia;
+  const legJoints = {};
   const footAnchors = [];
   for (const { x, segment } of legPositions) {
     for (const side of [-1, 1]) {
@@ -476,15 +473,8 @@ export function createArenaView(container, onPlaceOdor) {
       footAnchor.position.copy(tibiaEnd);
       tibiaGroup.add(footAnchor);
       footAnchors.push(footAnchor);
-      if (segment === "Front") {
-        if (side < 0) {
-          frontLeftFemur = femurGroup;
-          frontLeftTibia = tibiaGroup;
-        } else {
-          frontRightFemur = femurGroup;
-          frontRightTibia = tibiaGroup;
-        }
-      }
+      const legCode = `${segment === "Front" ? "F" : segment === "Middle" ? "M" : "B"}${lateral}`;
+      legJoints[legCode] = { femur: femurGroup, tibia: tibiaGroup };
 
       femurGroup.add(tibiaGroup);
       legGroup.add(femurGroup);
@@ -492,12 +482,7 @@ export function createArenaView(container, onPlaceOdor) {
     }
   }
   body.add(legsGroup);
-  const flyKinematics = createFlyKinematics({
-    frontLeftFemur,
-    frontLeftTibia,
-    frontRightFemur,
-    frontRightTibia,
-  });
+  const flyKinematics = createFlyKinematics(legJoints);
   body.traverse((object) => {
     if (object.isMesh && object.material !== wingMaterial) object.castShadow = true;
   });

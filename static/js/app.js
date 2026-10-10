@@ -27,6 +27,7 @@ const laserIntensity = document.querySelector("#laser-intensity");
 const laserIntensityValue = document.querySelector("#laser-intensity-value");
 const optoContinuous = document.querySelector("#opto-continuous");
 const optoVncSide = document.querySelector("#opto-vnc-side");
+const optoVncGanglion = document.querySelector("#opto-vnc-ganglion");
 let socket, reconnectTimer = null, latestPose = { x: 0, y: 0, z: 0, yaw: 0 };
 let toastTimer = null;
 let trial = null;
@@ -345,6 +346,7 @@ document.querySelectorAll("[data-target][data-mode]").forEach((button) => button
     target,
     mode,
     side: target === "VNC" ? optoVncSide.value : "both",
+    ganglion: target === "VNC" ? optoVncGanglion.value || undefined : undefined,
     stimulus_mode: optoContinuous.checked ? "continuous" : "pulsed",
   };
   brain.flashOptogeneticTarget(stimulus);

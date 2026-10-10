@@ -323,12 +323,12 @@ class SimulationSession:
             )
         nodes.extend(
             {
-                "id": neuron_id,
-                "label": neuron_id,
+                "id": f"VNC_{ganglion}",
+                "label": ganglion,
                 "group": "VNC",
-                "side": "left" if "_FL_" in neuron_id else "right",
+                "side": "left" if ganglion.endswith("_L") else "right",
             }
-            for neuron_id in self.brain.front_leg_motor_ids
+            for ganglion in self.brain.vnc_ganglia
         )
         return nodes
 
@@ -719,15 +719,19 @@ class SimulationSession:
             if not isinstance(target, str) or not isinstance(mode, str):
                 raise ValueError("'target' and 'mode' must be strings.")
             side = message.get("side", "both")
+            ganglion = message.get("ganglion")
             stimulus_mode = message.get("stimulus_mode", "pulsed")
             if side not in {"left", "right", "both"}:
                 raise ValueError("'side' must be 'left', 'right', or 'both'.")
+            if ganglion is not None and not isinstance(ganglion, str):
+                raise ValueError("'ganglion' must be a string when supplied.")
             if stimulus_mode not in {"pulsed", "continuous"}:
                 raise ValueError("'stimulus_mode' must be 'pulsed' or 'continuous'.")
             self.active_opto = {
                 "target": target,
                 "mode": mode,
                 "side": side,
+                "ganglion": ganglion,
                 "stimulus_mode": stimulus_mode,
                 "ends_at_ms": self.time_ms + OPTO_STIMULUS_DURATION_MS,
             }
@@ -828,6 +832,7 @@ class SimulationSession:
                     active_opto["target"],
                     active_opto["mode"],
                     side=active_opto["side"],
+                    ganglion=active_opto["ganglion"],
                 )
         elif active_opto:
             self.active_opto = None
@@ -836,6 +841,7 @@ class SimulationSession:
             {"PN_L": left_current, "PN_R": right_current}, dt_ms=dt_ms
         )
         front_legs_neuro = self.brain.front_leg_firing_rates()
+        vnc_legs_neuro = self.brain.vnc_leg_firing_rates()
         current_counts = [int(count) for count in self.brain.spike_monitor.count]
         spike_counts = {
             record["id"]: current_counts[index] - prior_counts[index]
@@ -990,6 +996,7 @@ class SimulationSession:
             "dn_spikes": {"left": dn_left, "right": dn_right},
             "dn_activation": dn_activation,
             "front_legs_neuro": front_legs_neuro,
+            "vnc_legs_neuro": vnc_legs_neuro,
             "laser_intensity": self.laser_intensity,
             "dan_spikes": sum(
                 spike

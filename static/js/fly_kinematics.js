@@ -7,38 +7,44 @@ function unitInterval(value) {
 }
 
 export class FlyKinematics {
-  constructor({ frontLeftFemur, frontLeftTibia, frontRightFemur, frontRightTibia }) {
-    this.frontLegs = [
-      {
-        femur: frontLeftFemur,
-        tibia: frontLeftTibia,
+  constructor(legJoints) {
+    const ganglionByLeg = {
+      FL: "T1_L", FR: "T1_R",
+      ML: "T2_L", MR: "T2_R",
+      BL: "T3_L", BR: "T3_R",
+    };
+    this.legs = Object.entries(ganglionByLeg).map(([leg, ganglion]) => {
+      const { femur, tibia } = legJoints[leg];
+      return {
+        femur,
+        tibia,
+        ganglion,
         extension: 0,
-        femurProceduralAngle: frontLeftFemur.rotation.x,
-        tibiaProceduralAngle: frontLeftTibia.rotation.x,
-        extKey: "FL_ext",
-        flexKey: "FL_flex",
-      },
-      {
-        femur: frontRightFemur,
-        tibia: frontRightTibia,
-        extension: 0,
-        femurProceduralAngle: frontRightFemur.rotation.x,
-        tibiaProceduralAngle: frontRightTibia.rotation.x,
-        extKey: "FR_ext",
-        flexKey: "FR_flex",
-      },
-    ];
-    this.frontLegsNeuro = {};
+        femurProceduralAngle: femur.rotation.x,
+        tibiaProceduralAngle: tibia.rotation.x,
+      };
+    });
+    this.vncLegsNeuro = {};
   }
 
   updateFromTelemetry(telemetry) {
-    const activity = telemetry?.front_legs_neuro;
-    this.frontLegsNeuro = activity && typeof activity === "object" ? activity : {};
+    const activity = telemetry?.vnc_legs_neuro;
+    if (activity && typeof activity === "object") {
+      this.vncLegsNeuro = activity;
+      return;
+    }
+    const legacy = telemetry?.front_legs_neuro;
+    this.vncLegsNeuro = legacy && typeof legacy === "object"
+      ? {
+        T1_L: { ext: legacy.FL_ext, flex: legacy.FL_flex },
+        T1_R: { ext: legacy.FR_ext, flex: legacy.FR_flex },
+      }
+      : {};
   }
 
   resetRestPose() {
-    this.frontLegsNeuro = {};
-    for (const leg of this.frontLegs) {
+    this.vncLegsNeuro = {};
+    for (const leg of this.legs) {
       leg.extension = 0;
       leg.femur.rotation.x = leg.femurProceduralAngle;
       leg.tibia.rotation.x = leg.tibiaProceduralAngle;
@@ -47,9 +53,10 @@ export class FlyKinematics {
 
   update(elapsed) {
     const smoothing = 1 - Math.exp(-elapsed * 12);
-    for (const leg of this.frontLegs) {
-      const extensorDrive = unitInterval(this.frontLegsNeuro[leg.extKey]);
-      const flexorDrive = unitInterval(this.frontLegsNeuro[leg.flexKey]);
+    for (const leg of this.legs) {
+      const ganglion = this.vncLegsNeuro[leg.ganglion] ?? {};
+      const extensorDrive = unitInterval(ganglion.ext);
+      const flexorDrive = unitInterval(ganglion.flex);
       const extension = (extensorDrive - flexorDrive * .72) * MAX_REACH_ANGLE;
       leg.extension = THREE.MathUtils.lerp(leg.extension, extension, smoothing);
       leg.femur.rotation.x = THREE.MathUtils.lerp(
