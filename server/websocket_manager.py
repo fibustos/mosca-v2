@@ -46,6 +46,10 @@ from core.jedi_protocol import JediProtocolConfig
 
 ODOR_SOURCE_IDS = {"CS+": "odor_b", "CS-": "odor_a"}
 SIMULATION_SUBSTEPS = 2
+DEFAULT_LASER_INTENSITY_PA = 50.0
+MIN_LASER_INTENSITY_PA = 10.0
+MAX_LASER_INTENSITY_PA = 150.0
+OPTO_STIMULUS_DURATION_MS = 350.0
 CUSTOM_PROFILES_DIRECTORY = PROFILES_DIRECTORY / "custom"
 CS_PLUS_TAKEOFF_THRESHOLD = 0.1
 CLEAN_AIR_ODOR_THRESHOLD = 0.02
@@ -242,7 +246,8 @@ class SimulationSession:
         self.step_number = 0
         self.time_ms = 0.0
         self.clean_air_flight_seconds = 0.0
-        self.active_opto: dict[str, str] | None = None
+        self.active_opto: dict[str, Any] | None = None
+        self.laser_intensity = DEFAULT_LASER_INTENSITY_PA
         self.trial_started_ms: float | None = None
         self.trial_history: list[float] = []
         self.automatic_test_active = False
@@ -316,6 +321,15 @@ class SimulationSession:
                     "side": record["side"],
                 }
             )
+        nodes.extend(
+            {
+                "id": f"VNC_{ganglion}",
+                "label": ganglion,
+                "group": "VNC",
+                "side": "left" if ganglion.endswith("_L") else "right",
+            }
+            for ganglion in self.brain.vnc_ganglia
+        )
         return nodes
 
     def _synaptic_weights_pa(self) -> dict[str, float]:
@@ -704,8 +718,36 @@ class SimulationSession:
             mode = message.get("mode")
             if not isinstance(target, str) or not isinstance(mode, str):
                 raise ValueError("'target' and 'mode' must be strings.")
-            self.brain.stimulate_neuropil(target, mode)
-            self.active_opto = {"target": target, "mode": mode}
+            side = message.get("side", "both")
+            ganglion = message.get("ganglion")
+            stimulus_mode = message.get("stimulus_mode", "pulsed")
+            if side not in {"left", "right", "both"}:
+                raise ValueError("'side' must be 'left', 'right', or 'both'.")
+            if ganglion is not None and not isinstance(ganglion, str):
+                raise ValueError("'ganglion' must be a string when supplied.")
+            if stimulus_mode not in {"pulsed", "continuous"}:
+                raise ValueError("'stimulus_mode' must be 'pulsed' or 'continuous'.")
+            self.active_opto = {
+                "target": target,
+                "mode": mode,
+                "side": side,
+                "ganglion": ganglion,
+                "stimulus_mode": stimulus_mode,
+                "ends_at_ms": self.time_ms + OPTO_STIMULUS_DURATION_MS,
+            }
+        elif command == "set_laser_intensity":
+            intensity = message.get("laser_intensity")
+            if (
+                not isinstance(intensity, (int, float))
+                or isinstance(intensity, bool)
+                or not math.isfinite(intensity)
+                or not MIN_LASER_INTENSITY_PA <= intensity <= MAX_LASER_INTENSITY_PA
+            ):
+                raise ValueError(
+                    f"'laser_intensity' must be between {MIN_LASER_INTENSITY_PA} and {MAX_LASER_INTENSITY_PA} pA."
+                )
+            self.laser_intensity = float(intensity)
+            self.brain.set_laser_intensity(self.laser_intensity)
         elif command == "trigger_us":
             us_type = message.get("type")
             if us_type == "reward":
@@ -779,10 +821,27 @@ class SimulationSession:
             self.fly
         )
         self.brain.set_visual_kc_stimulus(visual_kc_activation, visual_bearing)
+        active_opto = self.active_opto
+        if active_opto and self.time_ms < active_opto["ends_at_ms"]:
+            elapsed_ms = self.time_ms - (active_opto["ends_at_ms"] - OPTO_STIMULUS_DURATION_MS)
+            is_pulse_on = active_opto["stimulus_mode"] == "continuous" or int(
+                elapsed_ms / 25.0
+            ) % 2 == 0
+            if is_pulse_on:
+                self.brain.stimulate_neuropil(
+                    active_opto["target"],
+                    active_opto["mode"],
+                    side=active_opto["side"],
+                    ganglion=active_opto["ganglion"],
+                )
+        elif active_opto:
+            self.active_opto = None
         prior_counts = [int(count) for count in self.brain.spike_monitor.count]
         motor_output = self.brain.step(
             {"PN_L": left_current, "PN_R": right_current}, dt_ms=dt_ms
         )
+        front_legs_neuro = self.brain.front_leg_firing_rates()
+        vnc_legs_neuro = self.brain.vnc_leg_firing_rates()
         current_counts = [int(count) for count in self.brain.spike_monitor.count]
         spike_counts = {
             record["id"]: current_counts[index] - prior_counts[index]
@@ -883,8 +942,15 @@ class SimulationSession:
         if self.automatic_test_active:
             self.automatic_test_learning_total += learning_index
             self.automatic_test_learning_samples += 1
-        opto = self.active_opto
-        self.active_opto = None
+        opto = (
+            {
+                key: value
+                for key, value in self.active_opto.items()
+                if key != "ends_at_ms"
+            }
+            if self.active_opto
+            else None
+        )
         synaptic_weights = self._synaptic_weights_pa()
         kc_mbon_weights = self.brain.kc_mbon_weights_pa()
         telemetry = {
@@ -929,6 +995,9 @@ class SimulationSession:
             "distance_to_food": distance_to_food,
             "dn_spikes": {"left": dn_left, "right": dn_right},
             "dn_activation": dn_activation,
+            "front_legs_neuro": front_legs_neuro,
+            "vnc_legs_neuro": vnc_legs_neuro,
+            "laser_intensity": self.laser_intensity,
             "dan_spikes": sum(
                 spike
                 for neuron_id, spike in spike_counts.items()

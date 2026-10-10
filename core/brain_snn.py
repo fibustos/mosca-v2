@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import math
+from collections import deque
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -35,6 +36,33 @@ prefs.codegen.target = "numpy"
 
 BASE_SYNAPTIC_CURRENT = 200.0 * pA
 INITIAL_KC_MBON_WEIGHT = 0.5
+FRONT_LEG_RATE_WINDOW_MS = 50.0
+FRONT_LEG_RATE_NORMALIZATION_HZ = 60.0
+OPTOGENETIC_CURRENT_GAIN = 4.0
+DEFAULT_LASER_INTENSITY_PA = 50.0
+VNC_T1_L = ("MN_FL_ext", "MN_FL_flex")
+VNC_T1_R = ("MN_FR_ext", "MN_FR_flex")
+VNC_T2_L = ("MN_ML_ext", "MN_ML_flex")
+VNC_T2_R = ("MN_MR_ext", "MN_MR_flex")
+VNC_T3_L = ("MN_BL_ext", "MN_BL_flex")
+VNC_T3_R = ("MN_BR_ext", "MN_BR_flex")
+VNC_GANGLIA = {
+    "T1_L": VNC_T1_L,
+    "T1_R": VNC_T1_R,
+    "T2_L": VNC_T2_L,
+    "T2_R": VNC_T2_R,
+    "T3_L": VNC_T3_L,
+    "T3_R": VNC_T3_R,
+}
+VNC_MOTOR_IDS = tuple(
+    neuron_id for neuron_ids in VNC_GANGLIA.values() for neuron_id in neuron_ids
+)
+FRONT_LEG_TELEMETRY_IDS = {
+    "FL_ext": "MN_FL_ext",
+    "FL_flex": "MN_FL_flex",
+    "FR_ext": "MN_FR_ext",
+    "FR_flex": "MN_FR_flex",
+}
 
 
 class BrainSNN:
@@ -71,6 +99,12 @@ class BrainSNN:
         self.kenyon_indices = self._indices_for_type("KenyonCell")
         self.output_indices = self._indices_for_type("DescendingNeuron")
         self.dopaminergic_indices = self._indices_for_type("DopaminergicNeuron")
+        self.vnc_motor_ids = VNC_MOTOR_IDS
+        self.vnc_ganglia = VNC_GANGLIA
+        self.laser_intensity = DEFAULT_LASER_INTENSITY_PA
+        self._vnc_motor_indices = {
+            neuron_id: index for index, neuron_id in enumerate(self.vnc_motor_ids)
+        }
         self._neuropil_neuron_types = {
             "AL": {"ProjectionNeuron"},
             "MB": {"KenyonCell", "MBON"},
@@ -122,6 +156,79 @@ class BrainSNN:
         self.neurons.i_opto = 0 * pA
         self.neurons.calcium = 0.0
         self._visual_kc_currents = [0.0] * len(self.neuron_records)
+        self.vnc_motor_neurons = NeuronGroup(
+            len(self.vnc_motor_ids),
+            model="""
+            dv/dt = (v_rest - v + (i_drive + i_opto + i_syn) / g_leak) / tau_m : volt (unless refractory)
+            di_syn/dt = -i_syn / tau_syn : amp
+            i_drive : amp
+            i_opto : amp
+            """,
+            threshold="v >= v_threshold",
+            reset="v = v_reset",
+            refractory=2 * ms,
+            method="euler",
+            clock=self.clock,
+            namespace={
+                "v_rest": -65 * mV,
+                "v_reset": -65 * mV,
+                "v_threshold": -50 * mV,
+                "tau_m": 20 * ms,
+                "tau_syn": 5 * ms,
+                "g_leak": 10 * nS,
+            },
+            name="vnc_motor_neurons",
+        )
+        self.vnc_motor_neurons.v = -65 * mV
+        self.vnc_motor_neurons.i_syn = 0 * pA
+        self.vnc_motor_neurons.i_drive = 120 * pA
+        self.vnc_motor_neurons.i_opto = 0 * pA
+        self.descending_to_vnc_synapses = Synapses(
+            self.neurons,
+            self.vnc_motor_neurons,
+            model="w : amp",
+            on_pre="i_syn_post += w",
+            clock=self.clock,
+            name="descending_to_vnc_synapses",
+        )
+        motor_source_indices: list[int] = []
+        motor_target_indices: list[int] = []
+        for neuron_index in self.output_indices:
+            for target_id in self.vnc_motor_ids:
+                motor_source_indices.append(neuron_index)
+                motor_target_indices.append(self._vnc_motor_indices[target_id])
+        self.descending_to_vnc_synapses.connect(
+            i=motor_source_indices, j=motor_target_indices
+        )
+        self.descending_to_vnc_synapses.w = 220 * pA
+        self.vnc_interneuron_synapses = Synapses(
+            self.vnc_motor_neurons,
+            self.vnc_motor_neurons,
+            model="w : amp",
+            on_pre="i_syn_post -= w",
+            clock=self.clock,
+            name="vnc_intersegmental_inhibition",
+        )
+        inhibitory_sources: list[int] = []
+        inhibitory_targets: list[int] = []
+
+        def inhibit(source_id: str, target_id: str) -> None:
+            inhibitory_sources.append(self._vnc_motor_indices[source_id])
+            inhibitory_targets.append(self._vnc_motor_indices[target_id])
+
+        for extensor_id, flexor_id in VNC_GANGLIA.values():
+            inhibit(extensor_id, flexor_id)
+            inhibit(flexor_id, extensor_id)
+        for left_ganglion, right_ganglion in (("T1_L", "T1_R"), ("T2_L", "T2_R"), ("T3_L", "T3_R")):
+            for left_id, right_id in zip(VNC_GANGLIA[left_ganglion], VNC_GANGLIA[right_ganglion], strict=True):
+                inhibit(left_id, right_id)
+                inhibit(right_id, left_id)
+        for left_ganglion, right_ganglion in (("T1_L", "T2_L"), ("T2_L", "T3_L"), ("T1_R", "T2_R"), ("T2_R", "T3_R")):
+            for source_id, target_id in zip(VNC_GANGLIA[left_ganglion], VNC_GANGLIA[right_ganglion], strict=True):
+                inhibit(source_id, target_id)
+                inhibit(target_id, source_id)
+        self.vnc_interneuron_synapses.connect(i=inhibitory_sources, j=inhibitory_targets)
+        self.vnc_interneuron_synapses.w = 90 * pA
 
         regular_edges = [
             edge
@@ -194,15 +301,24 @@ class BrainSNN:
         self._initial_kc_mbon_weights_pa = self.kc_mbon_weights_pa()
 
         self.spike_monitor = SpikeMonitor(self.neurons)
+        self.vnc_spike_monitor = SpikeMonitor(self.vnc_motor_neurons)
         self.voltage_monitor = StateMonitor(self.neurons, "v", record=True, clock=self.clock)
         self.network = Network(
             self.neurons,
             self.synapses,
             self.kc_mbon_synapses,
+            self.vnc_motor_neurons,
+            self.descending_to_vnc_synapses,
+            self.vnc_interneuron_synapses,
             self.spike_monitor,
+            self.vnc_spike_monitor,
             self.voltage_monitor,
         )
         self._previous_spike_counts = [0] * len(self.neuron_records)
+        self._previous_vnc_spike_count = 0
+        self._vnc_spike_times = {
+            neuron_id: deque() for neuron_id in self.vnc_motor_ids
+        }
 
     @staticmethod
     def _load_circuit(circuit_path: Path) -> dict[str, Any]:
@@ -312,19 +428,47 @@ class BrainSNN:
         self.neurons.i_reward[self.dopaminergic_indices] = -dopamine_current_pA * pA
         self.kc_mbon_synapses.dopamine_trace = -dopamine_current_pA / 500.0
 
-    def stimulate_neuropil(self, target: str, mode: str, current_pA: float = 500.0) -> None:
-        """Inject a one-step ChR2 or NpHR current into a displayed neuropil."""
-        if target not in self._neuropil_neuron_types:
+    def stimulate_neuropil(
+        self,
+        target: str,
+        mode: str,
+        laser_intensity: float | None = None,
+        side: str = "both",
+        ganglion: str | None = None,
+    ) -> None:
+        """Inject a one-step intensity-scaled ChR2 or NpHR current."""
+        if target not in {*self._neuropil_neuron_types, "VNC"}:
             raise ValueError(f"Unknown optogenetic target '{target}'.")
         if mode not in {"ChR2", "NpHR"}:
             raise ValueError("Optogenetic mode must be 'ChR2' or 'NpHR'.")
+        if side not in {"left", "right", "both"}:
+            raise ValueError("Optogenetic side must be 'left', 'right', or 'both'.")
+        if ganglion is not None and ganglion not in VNC_GANGLIA:
+            raise ValueError(f"Unknown VNC ganglion '{ganglion}'.")
+        if ganglion is not None and target != "VNC":
+            raise ValueError("A VNC ganglion can only target the VNC.")
+        if laser_intensity is None:
+            laser_intensity = self.laser_intensity
         if (
-            not isinstance(current_pA, (int, float))
-            or isinstance(current_pA, bool)
-            or not math.isfinite(current_pA)
-            or current_pA <= 0
+            not isinstance(laser_intensity, (int, float))
+            or isinstance(laser_intensity, bool)
+            or not math.isfinite(laser_intensity)
+            or laser_intensity <= 0
         ):
-            raise ValueError("current_pA must be a positive finite number.")
+            raise ValueError("laser_intensity must be a positive finite number.")
+        current_pA = float(laser_intensity) * OPTOGENETIC_CURRENT_GAIN
+        polarity = 1 if mode == "ChR2" else -1
+        if target == "VNC":
+            target_ids = VNC_GANGLIA[ganglion] if ganglion else self.vnc_motor_ids
+            indices = [
+                self._vnc_motor_indices[neuron_id]
+                for neuron_id in target_ids
+                if side == "both"
+                or (side == "left" and neuron_id.split("_")[1].endswith("L"))
+                or (side == "right" and neuron_id.split("_")[1].endswith("R"))
+            ]
+            self.vnc_motor_neurons.i_opto[indices] = polarity * current_pA * pA
+            return
         indices = [
             index
             for index, neuron in enumerate(self.neuron_records)
@@ -332,8 +476,18 @@ class BrainSNN:
         ]
         if not indices:
             raise ValueError(f"Neuropil '{target}' has no modeled neurons.")
-        polarity = 1 if mode == "ChR2" else -1
         self.neurons.i_opto[indices] = polarity * current_pA * pA
+
+    def set_laser_intensity(self, laser_intensity: float) -> None:
+        """Set the positive optical drive used by subsequent stimulation."""
+        if (
+            not isinstance(laser_intensity, (int, float))
+            or isinstance(laser_intensity, bool)
+            or not math.isfinite(laser_intensity)
+            or laser_intensity <= 0
+        ):
+            raise ValueError("laser_intensity must be a positive finite number.")
+        self.laser_intensity = float(laser_intensity)
 
     def set_extinction_active(self, active: bool) -> None:
         """Enable recovery while CS+ is present without a dopaminergic reward."""
@@ -556,6 +710,49 @@ class BrainSNN:
             for neuropil, types in self._neuropil_neuron_types.items()
         }
 
+    def _update_vnc_firing_rates(self) -> None:
+        """Record new VNC spikes and retain exactly the latest 50 ms window."""
+        start = self._previous_vnc_spike_count
+        spike_indices = np.asarray(self.vnc_spike_monitor.i[start:], dtype=int)
+        spike_times_ms = np.asarray(
+            self.vnc_spike_monitor.t[start:] / ms, dtype=float
+        )
+        for neuron_index, spike_time_ms in zip(
+            spike_indices, spike_times_ms, strict=True
+        ):
+            self._vnc_spike_times[
+                self.vnc_motor_ids[int(neuron_index)]
+            ].append(float(spike_time_ms))
+        self._previous_vnc_spike_count = len(self.vnc_spike_monitor.i)
+        cutoff_ms = float(self.network.t / ms) - FRONT_LEG_RATE_WINDOW_MS
+        for spike_times in self._vnc_spike_times.values():
+            while spike_times and spike_times[0] < cutoff_ms:
+                spike_times.popleft()
+
+    def front_leg_firing_rates(self) -> dict[str, float]:
+        """Return the legacy front-leg subset of VNC motor activity."""
+        window_seconds = FRONT_LEG_RATE_WINDOW_MS / 1_000.0
+        return {
+            telemetry_id: min(
+                1.0,
+                len(self._vnc_spike_times[neuron_id])
+                / window_seconds
+                / FRONT_LEG_RATE_NORMALIZATION_HZ,
+            )
+            for telemetry_id, neuron_id in FRONT_LEG_TELEMETRY_IDS.items()
+        }
+
+    def vnc_leg_firing_rates(self) -> dict[str, dict[str, float]]:
+        """Return normalized extensor/flexor activity for all six VNC ganglia."""
+        window_seconds = FRONT_LEG_RATE_WINDOW_MS / 1_000.0
+        return {
+            ganglion: {
+                "ext": min(1.0, len(self._vnc_spike_times[extensor_id]) / window_seconds / FRONT_LEG_RATE_NORMALIZATION_HZ),
+                "flex": min(1.0, len(self._vnc_spike_times[flexor_id]) / window_seconds / FRONT_LEG_RATE_NORMALIZATION_HZ),
+            }
+            for ganglion, (extensor_id, flexor_id) in VNC_GANGLIA.items()
+        }
+
     def step(
         self,
         input_currents: Mapping[str, Any] | Sequence[Any],
@@ -593,9 +790,11 @@ class BrainSNN:
 
         self.network.run(dt_ms * ms)
         self._clip_kc_mbon_weights()
+        self._update_vnc_firing_rates()
         self._visual_kc_currents = [0.0] * len(self.neuron_records)
         self.neurons.i_reward = 0 * pA
         self.neurons.i_opto = 0 * pA
+        self.vnc_motor_neurons.i_opto = 0 * pA
         current_counts = [int(count) for count in self.spike_monitor.count]
         output: dict[str, dict[str, float | int]] = {}
         for neuron_index in self.output_indices:
